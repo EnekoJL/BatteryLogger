@@ -25,6 +25,21 @@ async def make_client(max_retries: int = 5) -> tuple[AiohttpBmsClient, FakeSleep
 async def test_fetch_live_reading_success():
     client, _ = await make_client()
     with aioresponses() as m:
+        # real device shape: payload wrapped in {"batteryInfo": {...}} —
+        # confirmed against the actual BMS, same wrapper as the per-string endpoint
+        m.get(f'{BASE}/api/bcs/home', payload={'batteryInfo': {'soc': 50.0, 'voltage': 51.0}})
+        data = await client.fetch_live_reading()
+    await client.close()
+    assert data == {'soc': 50.0, 'voltage': 51.0}
+
+
+async def test_fetch_live_reading_falls_back_to_raw_dict_if_not_wrapped():
+    # defensive: if a firmware version ever stops wrapping the payload,
+    # don't silently drop every field (this was the actual bug — the
+    # previous refactor forgot to unwrap batteryInfo, so every reading
+    # came back all-zero even though the connection was "established").
+    client, _ = await make_client()
+    with aioresponses() as m:
         m.get(f'{BASE}/api/bcs/home', payload={'soc': 50.0, 'voltage': 51.0})
         data = await client.fetch_live_reading()
     await client.close()

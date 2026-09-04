@@ -134,8 +134,14 @@ class AiohttpBmsClient:
         return None
 
     async def fetch_live_reading(self) -> Optional[dict]:
+        # /api/bcs/home wraps its payload in {"batteryInfo": {...}} — same
+        # shape as the per-string endpoint. Falls back to the raw dict if
+        # ever unwrapped, matching the old code's defensive handling.
         session = await self._ensure_session()
-        return await self._get_json(session, ENDPOINT_HOME, timeout=5)
+        data = await self._get_json(session, ENDPOINT_HOME, timeout=5)
+        if data is None:
+            return None
+        return data.get('batteryInfo', data)
 
     async def fetch_discovered_strings(self) -> Optional[list[int]]:
         session = await self._ensure_session()
