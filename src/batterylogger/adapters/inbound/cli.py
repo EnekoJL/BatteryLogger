@@ -132,12 +132,14 @@ async def run(argv: list[str] | None = None) -> None:
             except (NotImplementedError, OSError):
                 signal.signal(sig, _handle_shutdown)
 
-        got_info = await use_case.wait_for_static_info(60)
-        if got_info:
+        print("  Waiting for Battery API connection... (Ctrl+C to cancel)\n")
+        connected = await use_case.wait_until_connected()
+        if connected:
             print(f"  Firmware : {use_case.firmware_info}")
-            print(f"  Battery  : {use_case.battery_config}\n")
-        else:
-            log.warning("Device info not available yet — continuing with empty metadata.")
+            print(f"  Battery  : {use_case.battery_config}")
+            if use_case.discovered_strings:
+                print(f"  Strings  : {use_case.discovered_strings}")
+            print()
 
         await use_case.wait_for_shutdown()
         print("\nShutting down...")

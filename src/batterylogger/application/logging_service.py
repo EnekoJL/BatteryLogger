@@ -36,6 +36,7 @@ class LoggingUseCase:
         status_interval: int = 10,
         string_state_repo: StringStateRepository | None = None,
         string_poll_interval: int = 30,
+        connect_retry_interval: int = 2,
     ):
         self.api = api
         self.state_repo = state_repo
@@ -48,6 +49,7 @@ class LoggingUseCase:
         self.status_interval = status_interval
         self.string_state_repo = string_state_repo
         self.string_poll_interval = string_poll_interval
+        self.connect_retry_interval = connect_retry_interval
 
         self.firmware_info = FirmwareInfo()
         self.battery_config = BatteryConfig()
@@ -118,6 +120,19 @@ class LoggingUseCase:
         except asyncio.TimeoutError:
             return False
 
+    async def wait_until_connected(self) -> bool:
+        """Blocks until either a real connection is established (True) or
+        shutdown is requested first (False, e.g. Ctrl+C while still
+        connecting) — unlike wait_for_static_info, this never times out on
+        its own; only a shutdown request or a real connection ends it."""
+        ready_task = asyncio.create_task(self.static_info_ready.wait())
+        shutdown_task = asyncio.create_task(self._shutdown_event.wait())
+        await asyncio.wait({ready_task, shutdown_task}, return_when=asyncio.FIRST_COMPLETED)
+        for task in (ready_task, shutdown_task):
+            if not task.done():
+                task.cancel()
+        return self.static_info_ready.is_set()
+
     async def wait_for_shutdown(self) -> None:
         await self._shutdown_event.wait()
 
@@ -151,6 +166,18 @@ class LoggingUseCase:
             pass
 
     async def _poll_api_loop(self) -> None:
+        # Nothing else starts (CSV writer, string poller, status printer all
+        # wait on static_info_ready) until the BMS actually answers — no
+        # point logging "OFFLINE" placeholder rows or spamming retries with
+        # backoff while it's still rate-limiting us.
+        first_reading = await self._wait_for_first_connection()
+        if first_reading is None:
+            return  # shutdown requested before any connection was made
+
+        await self.state_repo.update(first_reading)
+        self._connected = True
+        logger.info("Battery API connection established.")
+
         result = await self.api.fetch_static_info()
         if result:
             self.firmware_info, self.battery_config = result
@@ -160,6 +187,9 @@ class LoggingUseCase:
         self.static_info_ready.set()
 
         while not self._shutdown_event.is_set():
+            await self._sleep_or_stop(self.poll_interval)
+            if self._shutdown_event.is_set():
+                break
             self._total_polls += 1
             raw = await self.api.fetch_live_reading()
             if raw:
@@ -172,7 +202,17 @@ class LoggingUseCase:
                     logger.warning("Lost connection to Battery API.")
                 self._connected = False
                 self._error_count += 1
-            await self._sleep_or_stop(self.poll_interval)
+
+    async def _wait_for_first_connection(self) -> dict | None:
+        logger.info(f"Waiting for Battery API connection (retrying every {self.connect_retry_interval}s)...")
+        while not self._shutdown_event.is_set():
+            self._total_polls += 1
+            raw = await self.api.fetch_live_reading()
+            if raw:
+                return raw
+            self._error_count += 1
+            await self._sleep_or_stop(self.connect_retry_interval)
+        return None
 
     async def _write_csv_loop(self) -> None:
         await self.static_info_ready.wait()  # ensures firmware/battery_config/discovered_strings are populated
@@ -194,6 +234,7 @@ class LoggingUseCase:
             await self._sleep_or_stop(self.string_poll_interval)
 
     async def _status_loop(self) -> None:
+        await self.static_info_ready.wait()  # no point printing status before we're actually connected
         while not self._shutdown_event.is_set():
             await self._sleep_or_stop(self.status_interval)
             if self._shutdown_event.is_set():

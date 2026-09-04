@@ -36,6 +36,7 @@ python -m batterylogger.entrypoints.analyzer_main
 pytest --cov=batterylogger
 ```
 
+**Startup connect-gate (2026-09-04):** the logger blocks quietly on `/api/bcs/home` every 2s (`LoggingUseCase.connect_retry_interval`) until it gets a real response — no CSV writing, no string polling, no status printing happen before that (previously these ran optimistically and printed "OFFLINE" placeholder rows while disconnected). Once connected, it *also* waits for `/api/bcs/info` + `/api/bcs/config` (existing 5-retry/~30s backoff, unchanged) before the first CSV row — deliberately kept, so every row has complete metadata from the start; a slow/429-ing BMS on those two endpoints delays first-row logging even though live telemetry is already flowing. Ctrl+C works at any point in this sequence (`LoggingUseCase.wait_until_connected()`).
 ## Key files
 
 | File | Role |
