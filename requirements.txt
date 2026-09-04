@@ -1,0 +1,5 @@
+aiohttp==3.13.5
+dash==4.1.0
+dash-bootstrap-components==2.0.4
+pandas==3.0.3
+plotly==6.7.0
