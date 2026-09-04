@@ -21,6 +21,7 @@ from batterylogger.domain.config import (
     LoggerSettings,
 )
 from batterylogger.domain.entities import BatteryReading, SessionSummary
+from batterylogger.domain.string_reading import StringReading
 from batterylogger.domain.value_objects import BatteryConfig, FirmwareInfo
 
 
@@ -32,6 +33,14 @@ class BatteryApiPort(Protocol):
 
     async def fetch_live_reading(self) -> Optional[dict]:
         """Raw `/api/bcs/home` JSON payload, or None on failure."""
+        ...
+
+    async def fetch_discovered_strings(self) -> Optional[list[int]]:
+        """`/api/bcs/string` → `stringInfo.discovered`, or None on failure."""
+        ...
+
+    async def fetch_string_reading(self, string_id: int) -> Optional[dict]:
+        """Raw `batteryInfo` from `/api/bcs/battery/S{string_id:02d}`, or None on failure."""
         ...
 
 
@@ -48,13 +57,36 @@ class BatteryStateRepository(Protocol):
         ...
 
 
+class StringStateRepository(Protocol):
+    """Driven port: holds the current in-flight reading per discovered string."""
+
+    async def update(self, string_id: int, patch: dict) -> StringReading:
+        ...
+
+    async def get_snapshot(self, string_id: int) -> Optional[StringReading]:
+        ...
+
+    async def get_all_snapshots(self) -> dict[int, StringReading]:
+        ...
+
+
 class ReadingWriterPort(Protocol):
     """Driven port: persists live readings (logger side, write-only)."""
 
-    def configure(self, firmware: FirmwareInfo, battery_config: BatteryConfig) -> None:
+    def configure(
+        self,
+        firmware: FirmwareInfo,
+        battery_config: BatteryConfig,
+        discovered_strings: Optional[list[int]] = None,
+    ) -> None:
         ...
 
-    def write(self, reading: BatteryReading, timestamp: datetime) -> None:
+    def write(
+        self,
+        reading: BatteryReading,
+        timestamp: datetime,
+        string_readings: Optional[dict[int, StringReading]] = None,
+    ) -> None:
         ...
 
     def close(self, now: datetime) -> SessionSummary:

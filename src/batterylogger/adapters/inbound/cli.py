@@ -65,6 +65,9 @@ def _print_dry_run(result: DryRunResult) -> None:
     print(f"  Battery  : {result.battery_config}")
     if result.reading is not None:
         print(f"\n{result.reading}")
+    print(f"\n  Strings discovered: {result.discovered_strings or '(none)'}")
+    for sid, string_reading in result.string_readings.items():
+        print(f"\n{string_reading}")
     print("=" * 60 + "\n")
 
 

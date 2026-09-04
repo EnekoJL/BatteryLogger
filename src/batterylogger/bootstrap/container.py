@@ -13,6 +13,7 @@ from batterylogger.adapters.outbound.csv_reading_parser import CsvReadingParser
 from batterylogger.adapters.outbound.csv_reading_writer import CsvReadingWriter
 from batterylogger.adapters.outbound.ini_config_repository import IniConfigRepository
 from batterylogger.adapters.outbound.in_memory_state_repository import InMemoryStateRepository
+from batterylogger.adapters.outbound.in_memory_string_state_repository import InMemoryStringStateRepository
 from batterylogger.adapters.outbound.system_clock import AsyncSleeper, SystemClock
 from batterylogger.application.analysis_service import AnalysisUseCase
 from batterylogger.application.logging_service import LoggingUseCase
@@ -50,6 +51,7 @@ def build_logger_container(
     sleeper = AsyncSleeper()
     api_client = AiohttpBmsClient(api_settings, sleeper)
     state_repo = InMemoryStateRepository(topology, clock)
+    string_state_repo = InMemoryStringStateRepository()
     alerts = ConsoleAlertNotifier()
 
     writer = None
@@ -66,6 +68,8 @@ def build_logger_container(
         writer=writer,
         log_frequency=logger_settings.log_frequency,
         status_interval=status_interval,
+        string_state_repo=string_state_repo,
+        string_poll_interval=api_settings.string_poll_interval,
     )
 
     return LoggerContainer(use_case=use_case, api_client=api_client, topology=topology)

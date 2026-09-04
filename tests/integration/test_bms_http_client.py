@@ -78,3 +78,48 @@ async def test_fetch_static_info_exhausts_retries_returns_none():
 
     assert result is None
     assert sleeper.calls == [2, 4]  # backoff before attempts 2 and 3, none after the last
+
+
+async def test_fetch_discovered_strings_parses_non_contiguous_ids():
+    client, _ = await make_client()
+    with aioresponses() as m:
+        m.get(f'{BASE}/api/bcs/string', payload={'stringInfo': {'discovered': [1, 2, 4]}})
+        discovered = await client.fetch_discovered_strings()
+    await client.close()
+    assert discovered == [1, 2, 4]
+
+
+async def test_fetch_discovered_strings_http_error_returns_none():
+    client, _ = await make_client()
+    with aioresponses() as m:
+        m.get(f'{BASE}/api/bcs/string', status=500)
+        discovered = await client.fetch_discovered_strings()
+    await client.close()
+    assert discovered is None
+
+
+async def test_fetch_string_reading_zero_pads_url_and_extracts_battery_info(raw_string_payload):
+    client, _ = await make_client()
+    with aioresponses() as m:
+        m.get(f'{BASE}/api/bcs/battery/S04', payload={'batteryInfo': raw_string_payload})
+        data = await client.fetch_string_reading(4)
+    await client.close()
+    assert data == raw_string_payload
+
+
+async def test_fetch_string_reading_double_digit_id():
+    client, _ = await make_client()
+    with aioresponses() as m:
+        m.get(f'{BASE}/api/bcs/battery/S12', payload={'batteryInfo': {'id': 'S012'}})
+        data = await client.fetch_string_reading(12)
+    await client.close()
+    assert data == {'id': 'S012'}
+
+
+async def test_fetch_string_reading_endpoint_unreachable_returns_none():
+    client, _ = await make_client()
+    with aioresponses() as m:
+        m.get(f'{BASE}/api/bcs/battery/S01', status=500)
+        data = await client.fetch_string_reading(1)
+    await client.close()
+    assert data is None

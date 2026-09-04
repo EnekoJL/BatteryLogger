@@ -35,7 +35,12 @@ class IniConfigRepository:
         section = self._config['Battery_API'] if 'Battery_API' in self._config else {}
         ip = section.get('IP', '')
         poll_interval = int(section.get('PollInterval', 2))
-        return ApiSettings(base_url=f"http://{ip}" if ip else "", poll_interval=poll_interval)
+        string_poll_interval = int(section.get('StringPollInterval', 30))
+        return ApiSettings(
+            base_url=f"http://{ip}" if ip else "",
+            poll_interval=poll_interval,
+            string_poll_interval=string_poll_interval,
+        )
 
     def load_logger_settings(self) -> LoggerSettings:
         section = self._config['Logging'] if 'Logging' in self._config else {}

@@ -5,7 +5,14 @@ import pytest
 from batterylogger.application.logging_service import LoggingUseCase
 from batterylogger.domain.config import AlertThresholds
 from batterylogger.domain.value_objects import BatteryConfig, FirmwareInfo
-from tests.conftest import FakeBatteryApi, FakeStateRepository, FakeWriter, FakeAlertNotifier, FakeClock
+from tests.conftest import (
+    FakeAlertNotifier,
+    FakeBatteryApi,
+    FakeClock,
+    FakeStateRepository,
+    FakeStringStateRepository,
+    FakeWriter,
+)
 
 
 def make_use_case(**overrides):
@@ -16,6 +23,8 @@ def make_use_case(**overrides):
         clock=FakeClock(),
         poll_interval=1,
         alert_thresholds=AlertThresholds(soc_low=20.0, temp_high=40.0),
+        string_state_repo=FakeStringStateRepository(),
+        string_poll_interval=1,
     )
     defaults.update(overrides)
     return LoggingUseCase(**defaults)
@@ -45,6 +54,26 @@ class TestDryRun:
         result = await use_case.dry_run()
         assert result.ok is True
         assert result.reading is None
+
+    async def test_includes_discovered_strings_and_readings(self, raw_string_payload):
+        static_info = (FirmwareInfo(), BatteryConfig())
+        api = FakeBatteryApi(
+            static_info=static_info,
+            discovered_strings=[1, 4],
+            string_readings={1: raw_string_payload, 4: raw_string_payload},
+        )
+        use_case = make_use_case(api=api)
+        result = await use_case.dry_run()
+        assert result.discovered_strings == [1, 4]
+        assert set(result.string_readings.keys()) == {1, 4}
+        assert result.string_readings[1].soc == 99.0
+
+    async def test_missing_string_reading_is_skipped(self):
+        static_info = (FirmwareInfo(), BatteryConfig())
+        api = FakeBatteryApi(static_info=static_info, discovered_strings=[1, 2], string_readings={1: {'soc': 50.0}})
+        use_case = make_use_case(api=api)
+        result = await use_case.dry_run()
+        assert set(result.string_readings.keys()) == {1}  # string 2 never responded
 
 
 class TestCheckAlerts:
@@ -104,9 +133,40 @@ class TestSessionLifecycle:
         await asyncio.sleep(0.05)
         report = await use_case.stop()
 
-        assert writer.configured == (FirmwareInfo(mcs_core='fw1'), BatteryConfig(battery_model='X'))
+        assert writer.configured == (FirmwareInfo(mcs_core='fw1'), BatteryConfig(battery_model='X'), [])
         assert writer.closed_with is not None
         assert report.csv_summary is not None
+
+    async def test_string_poller_updates_string_state_repo(self, raw_string_payload):
+        api = FakeBatteryApi(
+            static_info=(FirmwareInfo(), BatteryConfig()),
+            discovered_strings=[1, 2],
+            string_readings={1: raw_string_payload, 2: raw_string_payload},
+        )
+        string_repo = FakeStringStateRepository()
+        use_case = make_use_case(api=api, string_state_repo=string_repo, poll_interval=100, string_poll_interval=100)
+        await use_case.start()
+        await asyncio.sleep(0.05)
+        await use_case.stop()
+
+        assert sorted(api.string_reading_calls) == [1, 2]
+        snapshots = await string_repo.get_all_snapshots()
+        assert set(snapshots.keys()) == {1, 2}
+        assert snapshots[1].soc == 99.0
+
+    async def test_writer_receives_discovered_strings_on_configure(self):
+        # _write_csv_loop has a fixed 3s warm-up before its first write() call
+        # (lets a real reading arrive), so this only checks configure() wiring
+        # — write()-with-string-data content is covered at the CsvReadingWriter
+        # adapter level (tests/integration/test_csv_reading_writer.py).
+        writer = FakeWriter()
+        api = FakeBatteryApi(static_info=(FirmwareInfo(), BatteryConfig()), discovered_strings=[1])
+        use_case = make_use_case(api=api, writer=writer, poll_interval=100, log_frequency=100, string_poll_interval=100)
+        await use_case.start()
+        await asyncio.sleep(0.05)
+        await use_case.stop()
+
+        assert writer.configured == (FirmwareInfo(), BatteryConfig(), [1])
 
     async def test_wait_for_static_info_times_out_when_api_never_responds(self):
         class HangingApi(FakeBatteryApi):

@@ -14,6 +14,7 @@ from batterylogger.domain.ports import (
     BatteryStateRepository,
     ClockPort,
     ReadingWriterPort,
+    StringStateRepository,
 )
 from batterylogger.domain.value_objects import BatteryConfig, FirmwareInfo
 from batterylogger.application.dto import DryRunResult, SessionReport
@@ -33,6 +34,8 @@ class LoggingUseCase:
         writer: ReadingWriterPort | None = None,
         log_frequency: int = 60,
         status_interval: int = 10,
+        string_state_repo: StringStateRepository | None = None,
+        string_poll_interval: int = 30,
     ):
         self.api = api
         self.state_repo = state_repo
@@ -43,9 +46,12 @@ class LoggingUseCase:
         self.writer = writer
         self.log_frequency = log_frequency
         self.status_interval = status_interval
+        self.string_state_repo = string_state_repo
+        self.string_poll_interval = string_poll_interval
 
         self.firmware_info = FirmwareInfo()
         self.battery_config = BatteryConfig()
+        self.discovered_strings: list[int] = []
         self.static_info_ready = asyncio.Event()
 
         self._connected = False
@@ -74,11 +80,23 @@ class LoggingUseCase:
 
         raw = await self.api.fetch_live_reading()
         reading = await self.state_repo.update(raw) if raw else None
+
+        discovered = await self.api.fetch_discovered_strings() or []
+        self.discovered_strings = discovered
+        string_readings = {}
+        if self.string_state_repo:
+            for sid in discovered:
+                raw_string = await self.api.fetch_string_reading(sid)
+                if raw_string:
+                    string_readings[sid] = await self.string_state_repo.update(sid, raw_string)
+
         return DryRunResult(
             ok=True,
             firmware=self.firmware_info,
             battery_config=self.battery_config,
             reading=reading,
+            discovered_strings=discovered,
+            string_readings=string_readings,
         )
 
     # -- long-running session ------------------------------------------------
@@ -87,6 +105,8 @@ class LoggingUseCase:
         self._start_time = self.clock.now()
         self._shutdown_event = asyncio.Event()
         self._tasks = [asyncio.create_task(self._poll_api_loop(), name='api-poller')]
+        if self.string_state_repo:
+            self._tasks.append(asyncio.create_task(self._poll_strings_loop(), name='string-poller'))
         if self.writer:
             self._tasks.append(asyncio.create_task(self._write_csv_loop(), name='csv-writer'))
         self._tasks.append(asyncio.create_task(self._status_loop(), name='status-printer'))
@@ -134,6 +154,9 @@ class LoggingUseCase:
         result = await self.api.fetch_static_info()
         if result:
             self.firmware_info, self.battery_config = result
+        discovered = await self.api.fetch_discovered_strings()
+        if discovered is not None:
+            self.discovered_strings = discovered
         self.static_info_ready.set()
 
         while not self._shutdown_event.is_set():
@@ -152,12 +175,23 @@ class LoggingUseCase:
             await self._sleep_or_stop(self.poll_interval)
 
     async def _write_csv_loop(self) -> None:
-        self.writer.configure(self.firmware_info, self.battery_config)
+        await self.static_info_ready.wait()  # ensures firmware/battery_config/discovered_strings are populated
+        self.writer.configure(self.firmware_info, self.battery_config, self.discovered_strings)
         await self._sleep_or_stop(3)  # let a real reading arrive before the first row
         while not self._shutdown_event.is_set():
             snapshot = await self.state_repo.get_snapshot()
-            self.writer.write(snapshot, self.clock.now())
+            string_snapshots = await self.string_state_repo.get_all_snapshots() if self.string_state_repo else {}
+            self.writer.write(snapshot, self.clock.now(), string_snapshots)
             await self._sleep_or_stop(self.log_frequency)
+
+    async def _poll_strings_loop(self) -> None:
+        await self.static_info_ready.wait()  # discovered_strings populated by _poll_api_loop
+        while not self._shutdown_event.is_set():
+            for sid in self.discovered_strings:
+                raw = await self.api.fetch_string_reading(sid)
+                if raw:
+                    await self.string_state_repo.update(sid, raw)
+            await self._sleep_or_stop(self.string_poll_interval)
 
     async def _status_loop(self) -> None:
         while not self._shutdown_event.is_set():

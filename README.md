@@ -126,6 +126,8 @@ All charts share a **synchronized zoom axis** — drag to zoom on any chart and 
 
 A **Export HTML Report** button generates a standalone `.html` file with all charts embedded.
 
+**Per-string tabs**: if the log has per-string columns (`string1_soc`, `string2_soc`, ...), one tab per discovered string appears below the pack-level charts, each with its own stat cards and the same chart types (plus a Cell Dispersion chart). Older logs with no string columns show no tabs — nothing else changes. The "Strings in parallel" selector in the action bar is unrelated to this — it only drives the cycle table's Ah/string split, for logs where real per-string data isn't available.
+
 ## CSV Format
 
 Files are saved in `csv/` with the pattern:

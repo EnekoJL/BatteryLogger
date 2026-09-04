@@ -4,8 +4,9 @@ No I/O, no asyncio, no framework imports here. Concurrency (locking) is an
 infrastructure concern and lives in adapters/outbound/in_memory_state_repository.py.
 """
 
-import dataclasses
 from dataclasses import dataclass, field
+
+from batterylogger.domain.merge import merge_dataclass
 
 
 @dataclass(frozen=True)
@@ -121,26 +122,6 @@ class BatteryReading:
         )
 
 
-def _merge(instance, patch: dict):
-    """Recursively build a new dataclass instance with `patch` applied.
-
-    Unknown keys are ignored (mirrors the BMS payload having fields we don't
-    track). Never mutates `instance`.
-    """
-    if not patch:
-        return instance
-    updates = {}
-    for key, value in patch.items():
-        if not hasattr(instance, key):
-            continue
-        current = getattr(instance, key)
-        if dataclasses.is_dataclass(current) and isinstance(value, dict):
-            updates[key] = _merge(current, value)
-        else:
-            updates[key] = value
-    return dataclasses.replace(instance, **updates) if updates else instance
-
-
 @dataclass(frozen=True)
 class SessionSummary:
     filename: str = ""
@@ -155,4 +136,4 @@ def apply_update(reading: BatteryReading, patch: dict) -> BatteryReading:
     `sop`/`aging`/`capacity`/`vcell`/`temperature` — matching the raw
     `/api/bcs/home` JSON shape.
     """
-    return _merge(reading, patch)
+    return merge_dataclass(reading, patch)

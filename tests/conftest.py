@@ -8,6 +8,7 @@ import pytest
 
 from batterylogger.domain.calculations import EnergyStats
 from batterylogger.domain.entities import BatteryReading, SessionSummary, apply_update
+from batterylogger.domain.string_reading import StringReading, apply_string_update
 
 
 # ---------------------------------------------------------------------------
@@ -51,9 +52,32 @@ def raw_config_payload():
 
 
 @pytest.fixture
+def raw_string_payload():
+    return {
+        'id': 'S001',
+        'current': 47.8,
+        'voltage': 50.9,
+        'soc': 99.0,
+        'soh': 99.8,
+        'power': 2433.0,
+        'vcell': {'vcellMax': 3396, 'vcellMin': 3392, 'vcellAvg': 3393, 'internalResistance': 10.7},
+        'dispersion': {'dispersionMax': 0, 'dispersionMin': 0, 'dispersionAvg': 1},
+        'temperature': {'tempMax': 36.0, 'tempMin': 34.0, 'tempAmb': 33.9, 'tempPCB': 33.9},
+        'event_mask': [0, 0, 0, 0, 0, 1],
+    }
+
+
+@pytest.fixture
 def make_reading():
     def _make(**overrides) -> BatteryReading:
         return dataclasses.replace(BatteryReading(), **overrides)
+    return _make
+
+
+@pytest.fixture
+def make_string_reading():
+    def _make(**overrides) -> StringReading:
+        return dataclasses.replace(StringReading(), **overrides)
     return _make
 
 
@@ -79,11 +103,15 @@ class FakeClock:
 
 
 class FakeBatteryApi:
-    def __init__(self, static_info=None, live_readings=None):
+    def __init__(self, static_info=None, live_readings=None, discovered_strings=None, string_readings=None):
         self._static_info = static_info
         self._live_readings = list(live_readings or [])
+        self._discovered_strings = discovered_strings if discovered_strings is not None else []
+        self._string_readings = string_readings or {}  # {string_id: raw_dict}
         self.static_calls = 0
         self.live_calls = 0
+        self.discovered_strings_calls = 0
+        self.string_reading_calls: list[int] = []
 
     async def fetch_static_info(self):
         self.static_calls += 1
@@ -94,6 +122,14 @@ class FakeBatteryApi:
         if self._live_readings:
             return self._live_readings.pop(0)
         return None
+
+    async def fetch_discovered_strings(self):
+        self.discovered_strings_calls += 1
+        return self._discovered_strings
+
+    async def fetch_string_reading(self, string_id: int):
+        self.string_reading_calls.append(string_id)
+        return self._string_readings.get(string_id)
 
 
 class FakeStateRepository:
@@ -120,15 +156,33 @@ class FakeWriter:
         self.writes: list[tuple] = []
         self.closed_with = None
 
-    def configure(self, firmware, battery_config):
-        self.configured = (firmware, battery_config)
+    def configure(self, firmware, battery_config, discovered_strings=None):
+        self.configured = (firmware, battery_config, discovered_strings or [])
 
-    def write(self, reading, timestamp):
-        self.writes.append((reading, timestamp))
+    def write(self, reading, timestamp, string_readings=None):
+        self.writes.append((reading, timestamp, string_readings or {}))
 
     def close(self, now) -> SessionSummary:
         self.closed_with = now
         return SessionSummary(filename='fake.csv', records_written=len(self.writes), duration_s=0)
+
+
+class FakeStringStateRepository:
+    def __init__(self):
+        self._readings: dict[int, StringReading] = {}
+        self.updates: list[tuple] = []
+
+    async def update(self, string_id: int, patch: dict) -> StringReading:
+        self.updates.append((string_id, patch))
+        current = self._readings.get(string_id, StringReading())
+        self._readings[string_id] = apply_string_update(current, patch)
+        return self._readings[string_id]
+
+    async def get_snapshot(self, string_id: int):
+        return self._readings.get(string_id)
+
+    async def get_all_snapshots(self) -> dict[int, StringReading]:
+        return dict(self._readings)
 
 
 class FakeAlertNotifier:
@@ -161,3 +215,8 @@ def fake_writer():
 @pytest.fixture
 def fake_state_repo():
     return FakeStateRepository()
+
+
+@pytest.fixture
+def fake_string_state_repo():
+    return FakeStringStateRepository()

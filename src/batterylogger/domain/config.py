@@ -8,6 +8,7 @@ from dataclasses import dataclass
 class ApiSettings:
     base_url: str
     poll_interval: int = 2
+    string_poll_interval: int = 30
 
 
 @dataclass(frozen=True)

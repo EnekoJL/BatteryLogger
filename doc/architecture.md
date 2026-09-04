@@ -2,6 +2,11 @@
 
 Hexagonal (ports & adapters), restructured 2026-09-04 from a flat 5-file
 script layout (preserved at `../BatteryLogger_v1_flat` and in git history).
+Per-string telemetry (`/api/bcs/string` + `/api/bcs/battery/Sxx`) was added
+on top of this same structure shortly after — `domain/string_reading.py`
+(`StringReading`, `detect_string_ids`), a new `StringStateRepository` port,
+an `InMemoryStringStateRepository` adapter, and per-string CSV columns/Dash
+tabs, all following the same layering below.
 
 ## Layers
 

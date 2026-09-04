@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 ENDPOINT_HOME = "/api/bcs/home"
 ENDPOINT_INFO = "/api/bcs/info"
 ENDPOINT_CONFIG = "/api/bcs/config"
+ENDPOINT_STRING = "/api/bcs/string"
+
+
+def _string_battery_endpoint(string_id: int) -> str:
+    return f"/api/bcs/battery/S{string_id:02d}"
 
 _BACKOFF_SEQUENCE = (2, 4, 8, 16, 30)
 
@@ -98,6 +103,20 @@ class AiohttpBmsClient:
     async def fetch_live_reading(self) -> Optional[dict]:
         session = await self._ensure_session()
         return await self._get_json(session, ENDPOINT_HOME, timeout=5)
+
+    async def fetch_discovered_strings(self) -> Optional[list[int]]:
+        session = await self._ensure_session()
+        data = await self._get_json(session, ENDPOINT_STRING, timeout=5)
+        if data is None:
+            return None
+        return data.get('stringInfo', {}).get('discovered', [])
+
+    async def fetch_string_reading(self, string_id: int) -> Optional[dict]:
+        session = await self._ensure_session()
+        data = await self._get_json(session, _string_battery_endpoint(string_id), timeout=5)
+        if data is None:
+            return None
+        return data.get('batteryInfo')
 
     @staticmethod
     def _parse_firmware_info(data: dict) -> FirmwareInfo:

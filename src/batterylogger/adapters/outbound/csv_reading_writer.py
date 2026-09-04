@@ -13,6 +13,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from batterylogger.domain.entities import BatteryReading, SessionSummary
+from batterylogger.domain.string_reading import StringReading
 from batterylogger.domain.value_objects import BatteryConfig, FirmwareInfo
 
 logger = logging.getLogger(__name__)
@@ -44,10 +45,17 @@ class CsvReadingWriter:
         self._records_written: int = 0
         self._session_start: Optional[datetime] = None
         self._current_date: Optional[date] = None
+        self._discovered_strings: list[int] = []
 
-    def configure(self, firmware: FirmwareInfo, battery_config: BatteryConfig) -> None:
+    def configure(
+        self,
+        firmware: FirmwareInfo,
+        battery_config: BatteryConfig,
+        discovered_strings: Optional[list[int]] = None,
+    ) -> None:
         self._firmware = firmware
         self._battery_config = battery_config
+        self._discovered_strings = discovered_strings or []
 
     def _build_static_meta(self) -> dict:
         fw = self._firmware
@@ -72,6 +80,9 @@ class CsvReadingWriter:
                 new_key = f"{parent_key}{sep}{field_name}" if parent_key else field_name
                 if hasattr(value, '__dataclass_fields__'):
                     items.update(self._flatten(value, new_key, sep=sep))
+                elif isinstance(value, (list, tuple)):
+                    for i, item in enumerate(value):
+                        items[f"{new_key}{sep}{i}"] = item
                 else:
                     items[new_key] = value
         return items
@@ -96,11 +107,21 @@ class CsvReadingWriter:
             logger.error(f"Failed to create CSV file: {e}")
             self.filename = ""
 
-    def write(self, reading: BatteryReading, timestamp: datetime) -> None:
+    def write(
+        self,
+        reading: BatteryReading,
+        timestamp: datetime,
+        string_readings: Optional[dict[int, StringReading]] = None,
+    ) -> None:
+        string_readings = string_readings or {}
+
         if self._headers is None:
             self._session_start = timestamp
             live_fields = list(self._flatten(reading).keys())
-            self._headers = ['Timestamp'] + _STATIC_META_COLUMNS + live_fields
+            string_fields = []
+            for sid in self._discovered_strings:
+                string_fields += list(self._flatten(StringReading(), parent_key=f'string{sid}').keys())
+            self._headers = ['Timestamp'] + _STATIC_META_COLUMNS + live_fields + string_fields
             self._static_meta = self._build_static_meta()
             self._current_date = timestamp.date()
             self._create_file()
@@ -122,6 +143,9 @@ class CsvReadingWriter:
             **self._static_meta,
             **self._flatten(reading),
         }
+        for sid in self._discovered_strings:
+            string_reading = string_readings.get(sid, StringReading())
+            row.update(self._flatten(string_reading, parent_key=f'string{sid}'))
         try:
             with open(self.filename, 'a', newline='', encoding='utf-8-sig') as f:
                 csv.DictWriter(f, fieldnames=self._headers).writerow(row)

@@ -43,7 +43,8 @@ pytest --cov=batterylogger
 | `src/batterylogger/domain/entities.py` | `BatteryReading` (frozen) + pure `apply_update()` merge |
 | `src/batterylogger/domain/calculations.py` | Pure math: corrected vcell, cell IR, energy accumulation |
 | `src/batterylogger/domain/cycle_analysis.py` | `detect_cycles(df)` — pandas allowed here by design (see doc) |
-| `src/batterylogger/domain/stats.py` | `compute_session_stats(df)` — numbers only, no rendering |
+| `src/batterylogger/domain/stats.py` | `compute_session_stats(df, prefix='')` — numbers only, no rendering |
+| `src/batterylogger/domain/string_reading.py` | `StringReading` (frozen) + `detect_string_ids(df)` for per-string columns |
 | `src/batterylogger/domain/ports.py` | Port interfaces (Protocol) — the DIP boundary |
 | `src/batterylogger/application/logging_service.py` | `LoggingUseCase` — polling/CSV/status/alert orchestration |
 | `src/batterylogger/application/analysis_service.py` | `AnalysisUseCase` — parse + analyze a log |
@@ -63,9 +64,11 @@ pytest --cov=batterylogger
 
 | Endpoint | Used for |
 |----------|----------|
-| `/api/bcs/home` | Live data (voltage, current, SOC, cells, temps, capacity counters) |
+| `/api/bcs/home` | Pack-level live data (voltage, current, SOC, cells, temps, capacity counters) |
 | `/api/bcs/info` | Firmware versions, serial numbers |
 | `/api/bcs/config` | Battery model, topology, nominal capacity |
+| `/api/bcs/string` | `stringInfo.discovered` — list of present string IDs, e.g. `[1, 2, 4]` (not necessarily contiguous). Fetched once at startup, like `/info`/`/config`. |
+| `/api/bcs/battery/S{id:02d}` | Per-string live data (e.g. `S01`, `S04`) — same shape as `/home` plus `dispersion` + `event_mask`. Polled on its own slower `StringPollInterval` cadence, sequentially per string (the BMS already 429s under lighter load). |
 
 ## CSV columns to know
 
@@ -80,6 +83,8 @@ All `BatteryReading` fields are flattened with `_` separator (see `CsvReadingWri
 | `capacity_usefulCapacity` | BMS-reported usable capacity (≈ 266 Ah for 280 Ah cell) |
 | `meta_capacity_ah` | Nominal capacity from config (280 Ah, constant) |
 | `vcell_corrected_vcell` | IR-compensated cell voltage (derived in `domain/calculations.py`) |
+
+**Per-string columns** (added when strings are discovered): every `StringReading` field flattened the same way, prefixed `string{id}_` — e.g. `string1_soc`, `string1_vcell_vcellMax`, `string1_dispersion_dispersionAvg`, `string1_event_mask_0..5`. Wide format: still one row per timestamp, pack-level columns unchanged. Old CSVs (pre this feature) simply have none of these columns — `domain/string_reading.py::detect_string_ids(df)` returns `[]` for them, and the analyzer renders no string tabs (fully backward compatible). The manual "Strings in parallel" selector in the Dash UI is unrelated/unchanged — it still only drives the cycle table's Ah/string split for those old logs.
 
 ## Cycle analysis (domain/cycle_analysis.py)
 
@@ -111,6 +116,7 @@ This table is enforced as a regression test: `tests/unit/domain/test_cycle_analy
 [Battery_API]
 IP=192.168.55.193
 PollInterval=5          ; seconds between live polls
+StringPollInterval=30   ; seconds between per-string polls (slower on purpose)
 
 [Logging]
 LogFrequency=5          ; seconds between CSV rows

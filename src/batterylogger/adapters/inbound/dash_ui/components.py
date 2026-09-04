@@ -2,11 +2,14 @@
 and domain.cycle_analysis.Cycle — this module never computes them, only
 formats and colors them."""
 
-from dash import html
+from dash import dcc, html
 import dash_bootstrap_components as dbc
+import pandas as pd
 
+from batterylogger.adapters.inbound.dash_ui.charts import create_figures
 from batterylogger.domain.cycle_analysis import Cycle
-from batterylogger.domain.stats import SessionStats
+from batterylogger.domain.stats import SessionStats, compute_session_stats
+from batterylogger.domain.string_reading import detect_string_ids
 
 
 def _info_item(label: str, value: str, mono: bool = False) -> html.Div:
@@ -293,3 +296,52 @@ def build_cycle_table(cycles: list[Cycle], n_parallel: int = 1) -> dbc.Card | No
     ],
     className='mb-3 border-0 shadow-sm',
     style={'borderLeft': '4px solid #2980B9', 'borderRadius': '8px'})
+
+
+def _string_graph(prefix: str, key: str, figs: dict):
+    return dcc.Graph(
+        id={'type': 'string-graph', 'index': f'{prefix}{key}'},
+        figure=figs[key],
+        config={'displayModeBar': True, 'modeBarButtonsToRemove': ['lasso2d', 'select2d']},
+    )
+
+
+def build_string_tabs(df: pd.DataFrame) -> dbc.Tabs | None:
+    """One tab per discovered string, each with its own stat cards + charts.
+
+    Returns None for old-format logs (no `string{N}_soc` columns) — fully
+    additive, doesn't touch the existing pack-level dashboard or the manual
+    "Strings in parallel" selector (which still drives cycle-table Ah math
+    for backward compatibility with those old logs).
+    """
+    string_ids = detect_string_ids(df)
+    if not string_ids:
+        return None
+
+    tabs = []
+    for sid in string_ids:
+        prefix = f'string{sid}_'
+        stats = compute_session_stats(df, prefix=prefix)
+        figs = create_figures(df, prefix=prefix)
+
+        tab_content = html.Div([
+            build_session_stats(stats),
+            dbc.Row([
+                dbc.Col(_string_graph(prefix, 'power', figs), md=6),
+                dbc.Col(_string_graph(prefix, 'voltage', figs), md=6),
+            ], className='mb-3'),
+            dbc.Row([
+                dbc.Col(_string_graph(prefix, 'soc', figs), md=6),
+                dbc.Col(_string_graph(prefix, 'current', figs), md=6),
+            ], className='mb-3'),
+            dbc.Row([
+                dbc.Col(_string_graph(prefix, 'vcell', figs), md=6),
+                dbc.Col(_string_graph(prefix, 'temp', figs), md=6),
+            ], className='mb-3'),
+        ] + ([
+            dbc.Row([dbc.Col(_string_graph(prefix, 'dispersion', figs), md=6)], className='mb-3'),
+        ] if 'dispersion' in figs else []), className='pt-3')
+
+        tabs.append(dbc.Tab(tab_content, label=f'String {sid}', tab_id=f'string-tab-{sid}'))
+
+    return dbc.Tabs(tabs, className='mt-2')

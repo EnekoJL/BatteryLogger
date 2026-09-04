@@ -5,6 +5,7 @@ from freezegun import freeze_time
 
 from batterylogger.adapters.outbound.csv_reading_writer import CsvReadingWriter
 from batterylogger.domain.entities import BatteryReading
+from batterylogger.domain.string_reading import StringReading
 from batterylogger.domain.value_objects import BatteryConfig, FirmwareInfo
 
 
@@ -67,6 +68,69 @@ def test_no_rotation_when_disabled(tmp_path):
     writer.write(BatteryReading(voltage=51.0), datetime(2026, 1, 2, 0, 1, 0))
 
     assert writer.filename == first_file
+
+
+def test_header_includes_columns_for_each_discovered_string(tmp_path):
+    writer = make_writer(tmp_path)
+    writer.configure(FirmwareInfo(), BatteryConfig(), discovered_strings=[1, 2])
+
+    writer.write(BatteryReading(voltage=51.0), datetime(2026, 1, 1, 12, 0, 0))
+
+    with open(writer.filename, newline='', encoding='utf-8-sig') as f:
+        header = next(csv.reader(f))
+    assert 'string1_soc' in header
+    assert 'string2_soc' in header
+    assert 'string1_dispersion_dispersionAvg' in header
+    assert all(f'string1_event_mask_{i}' in header for i in range(6))
+    # non-contiguous discovery (e.g. [1, 4]) shouldn't add a phantom string3_*
+    assert 'string3_soc' not in header
+
+
+def test_row_uses_real_string_reading_when_present(tmp_path):
+    writer = make_writer(tmp_path)
+    writer.configure(FirmwareInfo(), BatteryConfig(), discovered_strings=[1])
+
+    writer.write(
+        BatteryReading(voltage=51.0),
+        datetime(2026, 1, 1, 12, 0, 0),
+        string_readings={1: StringReading(soc=99.0, voltage=50.9)},
+    )
+
+    with open(writer.filename, newline='', encoding='utf-8-sig') as f:
+        rows = list(csv.DictReader(f))
+    assert rows[0]['string1_soc'] == '99.0'
+    assert rows[0]['string1_voltage'] == '50.9'
+
+
+def test_row_falls_back_to_defaults_for_string_not_yet_polled(tmp_path):
+    # discovered at startup, but the (slower) string-poll loop hasn't
+    # produced a reading for string 2 yet — row must still have every column.
+    writer = make_writer(tmp_path)
+    writer.configure(FirmwareInfo(), BatteryConfig(), discovered_strings=[1, 2])
+
+    writer.write(
+        BatteryReading(voltage=51.0),
+        datetime(2026, 1, 1, 12, 0, 0),
+        string_readings={1: StringReading(soc=99.0)},  # string 2 missing
+    )
+
+    with open(writer.filename, newline='', encoding='utf-8-sig') as f:
+        rows = list(csv.DictReader(f))
+    assert rows[0]['string1_soc'] == '99.0'
+    assert rows[0]['string2_soc'] == '0.0'  # StringReading() default
+
+
+def test_no_discovered_strings_produces_no_string_columns(tmp_path):
+    # old-format-equivalent session (no strings discovered) — CSV shape
+    # identical to pre-feature output.
+    writer = make_writer(tmp_path)
+    writer.configure(FirmwareInfo(), BatteryConfig())  # discovered_strings omitted
+
+    writer.write(BatteryReading(voltage=51.0), datetime(2026, 1, 1, 12, 0, 0))
+
+    with open(writer.filename, newline='', encoding='utf-8-sig') as f:
+        header = next(csv.reader(f))
+    assert not any(col.startswith('string') for col in header)
 
 
 def test_close_reports_records_written_and_duration(tmp_path):

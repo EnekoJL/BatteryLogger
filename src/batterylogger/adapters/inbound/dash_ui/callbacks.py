@@ -100,6 +100,8 @@ def update_graphs(analysis_use_case: AnalysisUseCase, data, n_parallel):
             dbc.Col(graph('vcell'), md=6),
             dbc.Col(graph('temp'), md=6),
         ], className='mb-3'),
+
+        components.build_string_tabs(df) or html.Div(),
     ])
 
 

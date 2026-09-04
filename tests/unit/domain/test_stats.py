@@ -64,3 +64,24 @@ def test_no_negative_current_means_no_peak_discharge():
     stats = compute_session_stats(df)
     assert stats.peak_charge_a == 3.0
     assert stats.peak_discharge_a is None
+
+
+def test_prefix_reads_that_strings_columns_instead():
+    df = pd.DataFrame({
+        'Timestamp': pd.date_range('2026-01-01', periods=2, freq='1h'),
+        'soc': [10.0, 20.0],          # pack-level — must be ignored when prefix given
+        'string1_soc': [80.0, 90.0],
+        'string1_current': [5.0, -5.0],
+    })
+    stats = compute_session_stats(df, prefix='string1_')
+    assert stats.soc_min == 80.0
+    assert stats.soc_max == 90.0
+    assert stats.peak_charge_a == 5.0
+    assert stats.peak_discharge_a == 5.0
+
+
+def test_prefix_with_no_matching_columns_yields_none_fields():
+    df = pd.DataFrame({'soc': [10.0, 20.0]})  # no string2_* columns at all
+    stats = compute_session_stats(df, prefix='string2_')
+    assert stats.soc_min is None
+    assert stats.record_count == 2
