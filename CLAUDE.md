@@ -4,35 +4,59 @@
 
 Real-time logger and offline analyzer for CEGASA BCS battery systems (E_BICK_LV_280, 280 Ah nominal).
 
-Two independent tools:
-- **`main_logger.py`** — polls BMS REST API, writes timestamped CSV rows
-- **`visual_log.py`** — Dash web app, loads CSV, shows charts + cycle table
+Two independent tools sharing one domain layer:
+- **logger** (`entrypoints/logger_main.py`) — polls BMS REST API, writes timestamped CSV rows
+- **analyzer** (`entrypoints/analyzer_main.py`) — Dash web app, loads CSV, shows charts + cycle table
+
+Package: `src/batterylogger/`, built as hexagonal architecture (ports & adapters) + SOLID.
+`domain/` and `application/` never import aiohttp/Dash/csv/configparser — only
+`domain/ports.py` interfaces. Concrete adapters implement those ports;
+`bootstrap/container.py` is the only place a concrete adapter gets wired to a
+use-case. See `doc/architecture.md` for the full breakdown and rationale.
+
+**Note:** a pre-refactor flat-file version (the same code as plain
+`main_logger.py`/`visual_log.py`/etc. at repo root) is preserved at
+`../BatteryLogger_v1_flat` and on git branch history — not something to sync
+with going forward, just a safety copy from the 2026-09-04 restructure.
 
 ## Run
 
 ```bash
-# First time: ./run.sh   (creates env, installs deps)
+# First time: ./run.sh   (creates env, installs package + dev deps in editable mode)
 
 source env/bin/activate
 
 # Logger (connects to BMS at IP in cfg.ini)
-python src/main_logger.py
+python -m batterylogger.entrypoints.logger_main
 
 # Analyzer (drag-and-drop CSV at http://localhost:8050)
-python src/visual_log.py
+python -m batterylogger.entrypoints.analyzer_main
+
+# Tests
+pytest --cov=batterylogger
 ```
 
 ## Key files
 
 | File | Role |
 |------|------|
-| `src/main_logger.py` | Entry point, CLI args, shutdown handling |
-| `src/api_controller.py` | Async aiohttp client; polls `/api/bcs/home`, `/info`, `/config` |
-| `src/csv_writer.py` | Appends rows to CSV; daily rotation optional |
-| `src/datastruct.py` | `BatteryData` (thread-safe, async); `BatteryInfo` dataclass tree |
-| `src/visual_log.py` | Dash app: upload → parse → stats + cycle table + 6 charts |
+| `src/batterylogger/domain/entities.py` | `BatteryReading` (frozen) + pure `apply_update()` merge |
+| `src/batterylogger/domain/calculations.py` | Pure math: corrected vcell, cell IR, energy accumulation |
+| `src/batterylogger/domain/cycle_analysis.py` | `detect_cycles(df)` — pandas allowed here by design (see doc) |
+| `src/batterylogger/domain/stats.py` | `compute_session_stats(df)` — numbers only, no rendering |
+| `src/batterylogger/domain/ports.py` | Port interfaces (Protocol) — the DIP boundary |
+| `src/batterylogger/application/logging_service.py` | `LoggingUseCase` — polling/CSV/status/alert orchestration |
+| `src/batterylogger/application/analysis_service.py` | `AnalysisUseCase` — parse + analyze a log |
+| `src/batterylogger/adapters/outbound/bms_http_client.py` | aiohttp BMS client (implements `BatteryApiPort`) |
+| `src/batterylogger/adapters/outbound/csv_reading_writer.py` | CSV writer (implements `ReadingWriterPort`) |
+| `src/batterylogger/adapters/outbound/ini_config_repository.py` | **Only** place that reads `cfg.ini` |
+| `src/batterylogger/adapters/outbound/in_memory_state_repository.py` | Thread-safe live state (asyncio.Lock + domain calc) |
+| `src/batterylogger/adapters/inbound/cli.py` | Logger CLI (argparse, signals, console output) |
+| `src/batterylogger/adapters/inbound/dash_ui/` | Analyzer Dash app (layout/callbacks/charts/components) |
+| `src/batterylogger/bootstrap/container.py` | Composition root — wires adapters into use-cases |
 | `cfg.ini` | IP, poll rates, cell count, alert thresholds (repo root — resolved relative to cwd) |
-| `run.sh` | Creates `env/`, installs `requirements.txt` |
+| `run.sh` | Creates `env/`, `pip install -e ".[dev]"` |
+| `tests/` | pytest suite — `unit/domain`, `unit/application`, `integration`, `smoke` |
 | `doc/` | Additional documentation |
 
 ## BMS API endpoints
@@ -45,7 +69,7 @@ python src/visual_log.py
 
 ## CSV columns to know
 
-All `BatteryInfo` fields are flattened with `_` separator:
+All `BatteryReading` fields are flattened with `_` separator (see `CsvReadingWriter._flatten`):
 
 | Column | Meaning |
 |--------|---------|
@@ -55,13 +79,15 @@ All `BatteryInfo` fields are flattened with `_` separator:
 | `capacity_capacityDchLastCycle` | Ah from last completed discharge cycle |
 | `capacity_usefulCapacity` | BMS-reported usable capacity (≈ 266 Ah for 280 Ah cell) |
 | `meta_capacity_ah` | Nominal capacity from config (280 Ah, constant) |
-| `vcell_corrected_vcell` | IR-compensated cell voltage (derived in `datastruct.py`) |
+| `vcell_corrected_vcell` | IR-compensated cell voltage (derived in `domain/calculations.py`) |
 
-## Cycle analysis (visual_log.py)
+## Cycle analysis (domain/cycle_analysis.py)
 
 `detect_cycles(df)` segments the log into charge/discharge half-cycles by watching for resets in the BMS Ah counters. Validates each segment against mean current direction to handle BMS mid-cycle counter resets (observed behavior: BMS resets `capacityChCurrentCycle` without starting a discharge).
 
-`build_cycle_table(cycles)` renders a Bootstrap card with:
+`detect_cycles()` returns `list[Cycle]` (frozen dataclass) — pure numbers, no
+Dash/HTML. `adapters/inbound/dash_ui/components.py::build_cycle_table(cycles)`
+renders that into a Bootstrap card with:
 - Type badge (↓ Discharge red / ↑ Charge green)
 - Period, duration, SOC start→end, ΔSOC
 - Ah (BMS) vs Theo. Ah (`usefulCapacity × ΔSOC / 100`)
@@ -76,6 +102,8 @@ All `BatteryInfo` fields are flattened with `_` separator:
 | Full charge | 20% → 100% | ~80% | 210 Ah | ~99% |
 
 Useful capacity (266 Ah) × 80% ΔSOC = 212.8 Ah — matches BMS counter exactly. Nominal 280 Ah is never fully used (14 Ah reserve held by BMS).
+
+This table is enforced as a regression test: `tests/unit/domain/test_cycle_analysis.py::TestGoldenLog` runs `detect_cycles()` against `tests/fixtures/sample_log.csv` (a trimmed real log) and asserts 3 cycles, alternating discharge/charge/discharge, each ≥95% match.
 
 ## Config reference (cfg.ini)
 
@@ -99,8 +127,15 @@ TempHighThreshold=40
 
 ## Dependencies
 
+Runtime (`requirements.txt` / `pyproject.toml [project.dependencies]`):
 ```
 aiohttp, dash, dash-bootstrap-components, pandas, plotly
 ```
 
-Python ≥ 3.10 required (uses `X | Y` union type hints).
+Dev/test (`requirements-dev.txt` / `[project.optional-dependencies].dev`):
+```
+pytest, pytest-asyncio, pytest-cov, pytest-mock, aioresponses, freezegun
+```
+
+Python ≥ 3.10 required (uses `X | Y` union type hints). Package installed
+editable via `pyproject.toml` (`pip install -e ".[dev]"`) — `run.sh` does this.

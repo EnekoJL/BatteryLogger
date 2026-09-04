@@ -5,20 +5,22 @@ Real-time logging and offline analysis tool for CEGASA BCS battery systems.
 ## Requirements
 
 - Python **3.10+**
-- Dependencies listed in `requirements.txt`
+- Dependencies listed in `requirements.txt` (runtime) / `requirements-dev.txt` (+ test tools)
 
 ## Installation
 
 ```bash
-# One-shot: creates ./env and installs dependencies
+# One-shot: creates ./env and installs the package + dev/test dependencies
 ./run.sh
 
 # Or manually
 python -m venv env
 source env/bin/activate        # Linux / Mac
 env\Scripts\activate           # Windows
-pip install -r requirements.txt
+pip install -e ".[dev]"
 ```
+
+The package installs in editable mode (`pip install -e .`), so `batterylogger` imports cleanly from anywhere and `pytest` can find it without path hacks.
 
 ## Configuration (`cfg.ini`)
 
@@ -44,10 +46,10 @@ TempHighThreshold=40    ; Warn when max cell temperature exceeds this °C
 
 ## Usage
 
-### Logger (`src/main_logger.py`)
+### Logger
 
 ```bash
-python src/main_logger.py
+python -m batterylogger.entrypoints.logger_main
 ```
 
 On startup, the logger:
@@ -73,22 +75,24 @@ All device metadata (firmware versions, serial numbers, battery model) is embedd
 
 ```bash
 # Test connectivity before committing to a log session
-python src/main_logger.py --dry-run
+python -m batterylogger.entrypoints.logger_main --dry-run
 
 # Verbose output — shows every API call
-python src/main_logger.py --log-level DEBUG
+python -m batterylogger.entrypoints.logger_main --log-level DEBUG
 
 # Monitor only, no file written
-python src/main_logger.py --no-csv
+python -m batterylogger.entrypoints.logger_main --no-csv
 
 # Custom config path
-python src/main_logger.py --config /data/site_a/cfg.ini
+python -m batterylogger.entrypoints.logger_main --config /data/site_a/cfg.ini
 ```
 
-### Log Analyzer (`src/visual_log.py`)
+Or, after `./run.sh`, the console-script shortcuts `battery-logger` / `battery-analyzer` also work.
+
+### Log Analyzer
 
 ```bash
-python src/visual_log.py
+python -m batterylogger.entrypoints.analyzer_main
 ```
 
 Open [http://localhost:8050](http://localhost:8050), then drag and drop a CSV from the `csv/` folder.
@@ -154,19 +158,48 @@ Find the IP of the logging machine (e.g. `192.168.55.10`) and open:
 
 Windows users may need to allow the port through the firewall.
 
-## File Structure
+## Architecture
+
+Hexagonal (ports & adapters). `domain/` and `application/` never import
+aiohttp/Dash/csv/configparser directly — they depend only on the interfaces
+in `domain/ports.py`. Concrete adapters (HTTP client, CSV I/O, cfg.ini
+parsing, Dash UI) implement those ports; `bootstrap/container.py` is the
+only place that wires a concrete adapter to a use-case. See `doc/` for
+details.
 
 ```
 BatteryLogger/
-├── src/
-│   ├── main_logger.py     Entry point — logger + monitor
-│   ├── visual_log.py      Offline CSV analyzer (Dash)
-│   ├── api_controller.py  Async API client (home / info / config endpoints)
-│   ├── csv_writer.py      CSV logging with device metadata and daily rotation
-│   └── datastruct.py      Data structures and derived calculations
+├── src/batterylogger/
+│   ├── domain/           Entities, value objects, pure calculations, cycle
+│   │                      detection, session stats, port interfaces
+│   ├── application/       Use-cases: LoggingUseCase, AnalysisUseCase
+│   ├── adapters/
+│   │   ├── inbound/        CLI + Dash UI (driving adapters)
+│   │   └── outbound/       aiohttp BMS client, CSV I/O, cfg.ini repo,
+│   │                        in-memory state store, console alerts (driven adapters)
+│   ├── bootstrap/          Composition root — wires adapters into use-cases
+│   └── entrypoints/        Thin `python -m` entry points
+├── tests/                 pytest suite (unit / integration / smoke)
 ├── doc/                   Additional documentation
 ├── cfg.ini                Configuration
-├── requirements.txt       Python dependencies
-├── run.sh                 Creates venv + installs dependencies
+├── pyproject.toml         Packaging + pytest config
+├── requirements.txt       Runtime dependencies
+├── requirements-dev.txt   + test tooling
+├── run.sh                 Creates venv + installs everything
 └── csv/                   Log files (auto-created on first run)
 ```
+
+## Testing
+
+```bash
+pytest --cov=batterylogger --cov-report=term-missing
+```
+
+- `pytest-asyncio` — async tests for `LoggingUseCase` / the BMS HTTP client
+- `pytest-cov` — coverage
+- `pytest-mock`, `aioresponses` — mocking helpers (aiohttp calls mocked cleanly)
+- `freezegun` — deterministic wall-clock time for rotation/energy tests
+
+`tests/fixtures/sample_log.csv` is a trimmed real log used as a regression
+guard for cycle detection — it must keep matching the ~99-100% BMS-vs-theoretical
+Ah accuracy documented above.
