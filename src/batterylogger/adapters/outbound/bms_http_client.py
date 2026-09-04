@@ -11,6 +11,7 @@ concern, not "how do I talk HTTP to this device".
 
 import asyncio
 import logging
+import time
 from typing import Optional
 
 import aiohttp
@@ -26,6 +27,13 @@ ENDPOINT_INFO = "/api/bcs/info"
 ENDPOINT_CONFIG = "/api/bcs/config"
 ENDPOINT_STRING = "/api/bcs/string"
 
+# The BMS itself rejects (HTTP 429) any two requests received under 100ms
+# apart — confirmed by the device owner, not a tunable/config choice. Every
+# call funnels through _get_json, so throttling there covers every endpoint
+# and every caller (pack poll, string polls, static info's two calls back
+# to back, dry-run) without each call site needing its own pacing logic.
+MIN_REQUEST_INTERVAL_S = 0.11  # 100ms + small safety margin
+
 
 def _string_battery_endpoint(string_id: int) -> str:
     return f"/api/bcs/battery/S{string_id:02d}"
@@ -36,12 +44,21 @@ _BACKOFF_SEQUENCE = (2, 4, 8, 16, 30)
 class AiohttpBmsClient:
     """Implements domain.ports.BatteryApiPort."""
 
-    def __init__(self, settings: ApiSettings, sleeper: SleeperPort, max_retries: int = 5):
+    def __init__(
+        self,
+        settings: ApiSettings,
+        sleeper: SleeperPort,
+        max_retries: int = 5,
+        min_request_interval: float = MIN_REQUEST_INTERVAL_S,
+    ):
         self.base_url = settings.base_url
         self.poll_interval = settings.poll_interval
         self._sleeper = sleeper
         self._max_retries = max_retries
+        self._min_request_interval = min_request_interval
         self._session: Optional[aiohttp.ClientSession] = None
+        self._throttle_lock = asyncio.Lock()
+        self._last_request_at: Optional[float] = None
         logger.info(f"API endpoint: {self.base_url} | Poll interval: {self.poll_interval}s")
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
@@ -62,20 +79,36 @@ class AiohttpBmsClient:
         endpoint: str,
         timeout: int = 10,
     ) -> dict | None:
-        try:
-            async with session.get(
-                self._url(endpoint),
-                timeout=aiohttp.ClientTimeout(total=timeout),
-            ) as response:
-                if response.status == 200:
-                    return await response.json(content_type=None)
-                logger.warning(f"GET {endpoint} → HTTP {response.status}")
-        except asyncio.TimeoutError:
-            logger.error(f"Timeout on {endpoint}")
-        except aiohttp.ClientConnectorError as e:
-            logger.error(f"Connection refused on {endpoint}: {e}")
-        except aiohttp.ClientError as e:
-            logger.error(f"Network error on {endpoint}: {e}")
+        # Holds the lock for the FULL request (throttle wait + the actual GET),
+        # not just the pre-request check — and measures the gap from when the
+        # previous response actually finished, not when it was sent. A real
+        # network round-trip takes non-zero time; spacing only request *start*
+        # times can still land two requests close together at the device if
+        # the first one was slow to answer. This fully serializes access:
+        # no two requests are ever in flight at once, and each one starts
+        # >= min_request_interval after the previous one's response arrived.
+        async with self._throttle_lock:
+            if self._last_request_at is not None:
+                elapsed = time.monotonic() - self._last_request_at
+                remaining = self._min_request_interval - elapsed
+                if remaining > 0:
+                    await self._sleeper.sleep(remaining)
+            try:
+                async with session.get(
+                    self._url(endpoint),
+                    timeout=aiohttp.ClientTimeout(total=timeout),
+                ) as response:
+                    if response.status == 200:
+                        return await response.json(content_type=None)
+                    logger.warning(f"GET {endpoint} → HTTP {response.status}")
+            except asyncio.TimeoutError:
+                logger.error(f"Timeout on {endpoint}")
+            except aiohttp.ClientConnectorError as e:
+                logger.error(f"Connection refused on {endpoint}: {e}")
+            except aiohttp.ClientError as e:
+                logger.error(f"Network error on {endpoint}: {e}")
+            finally:
+                self._last_request_at = time.monotonic()
         return None
 
     async def fetch_static_info(self) -> Optional[tuple[FirmwareInfo, BatteryConfig]]:
