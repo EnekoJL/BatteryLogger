@@ -249,7 +249,9 @@ def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
     # 6b. Battery State — combined operating-state / severity indicator,
     # rendered as a compact single-lane ribbon (one colored block per
     # contiguous segment) rather than a line, so a brief state is never
-    # lost under a long one.
+    # lost under a long one. Non-RUN events are flagged with a marker +
+    # hover tooltip, not fixed on-canvas annotations — those kept
+    # overlapping/clipping regardless of staggering or anchoring.
     state_series = _state_label_series(df, col)
     segments = _state_segments(x, state_series) if state_series is not None else []
     if segments:
@@ -258,10 +260,8 @@ def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
         # A segment shorter than ~1% of the whole log's span can be
         # visually invisible next to a long RUN stretch even with a real
         # bar — pad it to a minimum on-screen width (floor of 1 min so
-        # short logs aren't over-padded). The vline+label added below for
-        # every non-RUN segment carries the true event regardless of bar
-        # width, and hover on the bar always shows the real start/end, so
-        # this padding never hides the real numbers, only makes them visible.
+        # short logs aren't over-padded). Hover on the bar always shows the
+        # real start/end, so this padding never hides the real numbers.
         total_span_ms = (x.iloc[-1] - x.iloc[0]) / pd.Timedelta(milliseconds=1) if len(x) > 1 else 60_000
         min_width_ms = max(total_span_ms * 0.01, 60_000)
 
@@ -295,12 +295,9 @@ def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
                 name=label, showlegend=True,
             ))
 
-        # Non-RUN segments are events worth flagging at a glance without
-        # zoom or hover — but a reconnect burst (DISCONNECTING -> READY ->
-        # CONNECTING, all within minutes) produces one annotation per
-        # micro-state, which overlaps and becomes unreadable. Group
-        # consecutive non-RUN segments that are close together in time into
-        # a single callout describing the whole sequence instead.
+        # Non-RUN segments close together in time (a reconnect burst) group
+        # into one cluster, so a burst gets one marker instead of several
+        # stacked at nearly the same pixel.
         CLUSTER_GAP = pd.Timedelta(minutes=10)
         non_run = [s for s in segments if s['label'] != 'RUN']
         clusters = []
@@ -310,65 +307,48 @@ def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
             else:
                 clusters.append([s])
 
-        # Callouts anchored to their marker with a short arrow (not a fixed
-        # rotated label) so text stays flat and legible; a slanted label
-        # against a tight top margin was still getting clipped. Clusters
-        # close together on the x-axis alternate a taller arrow so their
-        # callout boxes don't stack on top of each other.
-        collision_gap = (x.iloc[-1] - x.iloc[0]) * 0.03 if len(x) > 1 else pd.Timedelta(0)
-        prev_start = None
-        stagger = False
-        for cluster in clusters:
-            start = cluster[0]['start']
-            color = STATE_COLORS.get(cluster[0]['label'], C['muted'])
-
-            # Long sequences wrap onto a second line instead of stretching
-            # the badge wide enough to collide with its neighbour.
-            labels = [seg['label'] for seg in cluster]
-            if len(labels) > 2:
-                mid = (len(labels) + 1) // 2
-                sequence = ' → '.join(labels[:mid]) + ' →<br>' + ' → '.join(labels[mid:])
-            else:
-                sequence = ' → '.join(labels)
-
-            stagger = (prev_start is not None and start - prev_start < collision_gap and not stagger)
-            prev_start = start
-
-            fig.add_vline(x=start, line=dict(color=color, dash='dot', width=1))
-            fig.add_annotation(
-                # xanchor='left' grows the badge to the right of its marker
-                # instead of centering on it, so one near the left edge of
-                # the plot doesn't overflow off-screen.
-                x=start, y='State', xanchor='left', yanchor='bottom',
-                text=f"<b>{start:%H:%M}</b><br>{sequence}",
-                showarrow=True, arrowhead=2, ax=0, ay=-95 if stagger else -45,
-                font=dict(size=13, color='black'),
-                bgcolor='white', bordercolor='#333333', borderwidth=1, borderpad=4,
-            )
-
-        # One marker per cluster; hover carries the exact timestamp of each
-        # sub-event, since the callout above only shows the sequence.
         if clusters:
+            # A subtle dotted guide at each cluster's start time — an
+            # at-a-glance anchor, not a substitute for the hover detail.
+            for cluster in clusters:
+                color = STATE_COLORS.get(cluster[0]['label'], C['muted'])
+                fig.add_vline(x=cluster[0]['start'], line=dict(color=color, dash='dot', width=1))
+
             fig.add_trace(go.Scatter(
                 x=[c[0]['start'] for c in clusters],
                 y=['State'] * len(clusters),
                 mode='markers',
                 marker=dict(
-                    size=9, symbol='diamond',
+                    size=10, symbol='diamond',
                     color=[STATE_COLORS.get(c[0]['label'], C['muted']) for c in clusters],
                     line=dict(color='white', width=1),
                 ),
-                hovertext=[
-                    '<br>'.join(f"{seg['start']:%H:%M:%S}  {seg['label']}" for seg in cluster)
+                customdata=[
+                    '<br>'.join(f"{seg['start']:%H:%M:%S} → {seg['label']}" for seg in cluster)
                     for cluster in clusters
                 ],
-                hoverinfo='text',
+                hovertemplate=(
+                    '<b>Time:</b> %{x|%Y-%m-%d %H:%M:%S}<br>'
+                    '<b>Event:</b><br>%{customdata}<extra></extra>'
+                ),
                 showlegend=False,
+            ))
+
+            # One fixed, non-overlapping summary instead of per-event boxes
+            # on the canvas: a compact incident list in the subtitle.
+            incidents = ', '.join(
+                f"{c[0]['start']:%H:%M} ({' → '.join(seg['label'] for seg in c)})"
+                for c in clusters
+            )
+            fig.update_layout(title=dict(
+                text=f"Battery State<br><span style='font-size:11px;color:#7F8C8D'>"
+                     f"Incidents: {incidents}</span>",
+                font=dict(size=14),
             ))
 
         fig.update_xaxes(type='date')
         fig.update_yaxes(visible=False, showgrid=False)
-        fig.update_layout(bargap=0, height=270, margin=dict(t=140, b=40, l=20, r=20))
+        fig.update_layout(bargap=0, height=180, margin=dict(t=40, b=30, l=20, r=20))
         figs['state'] = fig
 
     return figs
