@@ -41,14 +41,16 @@ def _fig(title: str, y_label: str) -> go.Figure:
     return fig
 
 
-def _drop_zero(series: pd.Series) -> pd.Series:
-    """A literal 0 in a voltage reading is a sensor/comm glitch on this BMS,
-    not a real measurement (voltage can't legitimately hit 0 while the pack
-    is connected and logging) — plot it as a gap rather than a real point,
-    so it can't drag the y-axis autorange down to 0 and swamp the real
-    range. Unlike current/SOC/temperature, 0 has no valid meaning here.
+def _drop_below(series: pd.Series, floor: float) -> pd.Series:
+    """BMS comm glitches don't always land on exactly 0 — sometimes it's a
+    partial/garbage read that lands near-but-not-at 0 (e.g. a cell voltage
+    truncated to ~1000 mV while its neighbours sit at ~3300 mV). A fixed
+    `!= 0` test misses those. Instead mask anything below a floor that's
+    physically implausible for this system while connected and logging, so
+    a single glitchy sample becomes a gap instead of dragging the y-axis
+    autorange down and crushing the real signal.
     """
-    return series.where(series != 0)
+    return series.where(series >= floor)
 
 
 def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
@@ -86,15 +88,18 @@ def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
     figs['power'] = fig
 
     # 2. Voltage
+    # Floor is well below any real pack voltage (15 cells in series never
+    # legitimately drops under ~30 V) but comfortably above 0, to catch
+    # both a literal 0 and a near-zero garbage read.
     fig = _fig('Battery Voltage', 'V')
     if col('voltage') in df.columns:
-        fig.add_trace(go.Scatter(x=x, y=_drop_zero(df[col('voltage')]), name='Voltage',
+        fig.add_trace(go.Scatter(x=x, y=_drop_below(df[col('voltage')], 20), name='Voltage',
                                   line=dict(color=C['voltage'], width=2)))
     if col('sop_vCh') in df.columns:
-        fig.add_trace(go.Scatter(x=x, y=_drop_zero(df[col('sop_vCh')]), name='SOP Vch',
+        fig.add_trace(go.Scatter(x=x, y=_drop_below(df[col('sop_vCh')], 20), name='SOP Vch',
                                   line=dict(color=C['sop_ch'], dash='dot', width=1)))
     if col('sop_vDisch') in df.columns:
-        fig.add_trace(go.Scatter(x=x, y=_drop_zero(df[col('sop_vDisch')]), name='SOP Vdch',
+        fig.add_trace(go.Scatter(x=x, y=_drop_below(df[col('sop_vDisch')], 20), name='SOP Vdch',
                                   line=dict(color=C['sop_dch'], dash='dot', width=1)))
     figs['voltage'] = fig
 
@@ -124,34 +129,41 @@ def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
     figs['soc'] = fig
 
     # 5. Cell Voltages
+    # Floor sits above observed comm-glitch reads (~1000-1200 mV) and well
+    # below any real Li-ion cell voltage (never legitimately under ~2500 mV
+    # while the pack is connected and logging).
     fig = _fig('Cell Voltages', 'mV')
     if col('vcell_vcellMax') in df.columns:
-        fig.add_trace(go.Scatter(x=x, y=_drop_zero(df[col('vcell_vcellMax')]), name='Max',
+        fig.add_trace(go.Scatter(x=x, y=_drop_below(df[col('vcell_vcellMax')], 2000), name='Max',
                                   line=dict(color=C['cell_max'], width=1.5)))
     if col('vcell_vcellMin') in df.columns:
-        fig.add_trace(go.Scatter(x=x, y=_drop_zero(df[col('vcell_vcellMin')]), name='Min',
+        fig.add_trace(go.Scatter(x=x, y=_drop_below(df[col('vcell_vcellMin')], 2000), name='Min',
                                   line=dict(color=C['cell_min'], width=1.5)))
     if col('vcell_vcellAvg') in df.columns:
-        fig.add_trace(go.Scatter(x=x, y=_drop_zero(df[col('vcell_vcellAvg')]), name='Avg',
+        fig.add_trace(go.Scatter(x=x, y=_drop_below(df[col('vcell_vcellAvg')], 2000), name='Avg',
                                   line=dict(color=C['muted'], width=1, dash='dot')))
     if col('vcell_corrected_vcell') in df.columns:
-        fig.add_trace(go.Scatter(x=x, y=_drop_zero(df[col('vcell_corrected_vcell')]), name='Corrected',
+        fig.add_trace(go.Scatter(x=x, y=_drop_below(df[col('vcell_corrected_vcell')], 2000), name='Corrected',
                                   line=dict(color=C['cell_corr'], width=2, dash='dash')))
     figs['vcell'] = fig
 
     # 6. Temperatures
+    # Floor sits just above 0 to catch a literal-0 comm glitch. This system
+    # runs indoors with no sub-zero readings observed (cfg.ini only defines
+    # a *high* temp alert threshold) — genuinely cold deployments would need
+    # a lower/no floor here.
     fig = _fig('Temperatures', '°C')
     if col('temperature_tempMax') in df.columns:
-        fig.add_trace(go.Scatter(x=x, y=df[col('temperature_tempMax')], name='Max',
+        fig.add_trace(go.Scatter(x=x, y=_drop_below(df[col('temperature_tempMax')], 1), name='Max',
                                   line=dict(color=C['temp_max'], width=2)))
     if col('temperature_tempMin') in df.columns:
-        fig.add_trace(go.Scatter(x=x, y=df[col('temperature_tempMin')], name='Min',
+        fig.add_trace(go.Scatter(x=x, y=_drop_below(df[col('temperature_tempMin')], 1), name='Min',
                                   line=dict(color=C['temp_min'], width=1.5)))
     if col('temperature_tempAmb') in df.columns:
-        fig.add_trace(go.Scatter(x=x, y=df[col('temperature_tempAmb')], name='Ambient',
+        fig.add_trace(go.Scatter(x=x, y=_drop_below(df[col('temperature_tempAmb')], 1), name='Ambient',
                                   line=dict(color=C['temp_amb'], dash='dot', width=1.5)))
     if col('temperature_tempPCB') in df.columns:
-        fig.add_trace(go.Scatter(x=x, y=df[col('temperature_tempPCB')], name='PCB',
+        fig.add_trace(go.Scatter(x=x, y=_drop_below(df[col('temperature_tempPCB')], 1), name='PCB',
                                   line=dict(color=C['temp_pcb'], dash='dot', width=1)))
     figs['temp'] = fig
 
