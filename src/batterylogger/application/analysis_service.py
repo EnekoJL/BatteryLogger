@@ -3,7 +3,7 @@
 built by adapters/inbound/dash_ui/* from this use-case's output.
 """
 
-from typing import Optional
+from typing import Callable, Optional
 
 import pandas as pd
 
@@ -17,8 +17,13 @@ class AnalysisUseCase:
     def __init__(self, parser: ReadingParserPort):
         self.parser = parser
 
-    def parse(self, contents_b64: str, filename: str) -> tuple[Optional[pd.DataFrame], Optional[str]]:
-        return self.parser.parse(contents_b64, filename)
+    def parse(
+        self,
+        contents_b64: str,
+        filename: str,
+        on_progress: Optional[Callable[[int, int], None]] = None,
+    ) -> tuple[Optional[pd.DataFrame], Optional[str]]:
+        return self.parser.parse(contents_b64, filename, on_progress)
 
     def analyze(self, df: pd.DataFrame) -> AnalysisResult:
         stats = compute_session_stats(df)

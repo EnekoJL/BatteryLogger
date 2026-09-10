@@ -21,11 +21,15 @@ from batterylogger.adapters.inbound.dash_ui import components
 from batterylogger.adapters.inbound.dash_ui.charts import create_figures
 
 
-def update_store(analysis_use_case: AnalysisUseCase, contents, filename):
+def update_store(analysis_use_case: AnalysisUseCase, set_progress, contents, filename):
     if contents is None:
         return None, '', {'display': 'none'}, ''
 
-    df, error = analysis_use_case.parse(contents, filename)
+    def on_progress(rows_done: int, rows_total: int) -> None:
+        pct = int(rows_done / rows_total * 100) if rows_total else 0
+        set_progress((pct, f'{rows_done:,} / {rows_total:,} rows'))
+
+    df, error = analysis_use_case.parse(contents, filename, on_progress=on_progress)
     if error:
         return (
             None,
@@ -202,6 +206,14 @@ def download_html_report(data):
 
 
 def register_callbacks(app: dash.Dash, analysis_use_case: AnalysisUseCase) -> None:
+    # A named closure, not partial(update_store, analysis_use_case) — Dash's
+    # background-callback manager needs inspect.getsource(fn) to hash the
+    # callback for its cache key, which raises on a functools.partial
+    # object. update_store itself stays a plain top-level function so tests
+    # keep calling it directly.
+    def _update_store(set_progress, contents, filename):
+        return update_store(analysis_use_case, set_progress, contents, filename)
+
     app.callback(
         [Output('memory-store', 'data'),
          Output('output-filename', 'children'),
@@ -209,7 +221,10 @@ def register_callbacks(app: dash.Dash, analysis_use_case: AnalysisUseCase) -> No
          Output('header-badge', 'children')],
         Input('upload-data', 'contents'),
         State('upload-data', 'filename'),
-    )(partial(update_store, analysis_use_case))
+        background=True,
+        progress=[Output('upload-progress-bar', 'value'), Output('upload-progress-bar', 'label')],
+        running=[(Output('upload-progress-wrap', 'style'), {'display': 'block'}, {'display': 'none'})],
+    )(_update_store)
 
     app.callback(
         Output('output-graphs', 'children'),

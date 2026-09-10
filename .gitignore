@@ -12,6 +12,9 @@ __pycache__/
 csv/*.csv
 !csv/.gitkeep
 
+# Background-callback progress cache (analyzer, local runtime state)
+.dash_cache/
+
 # Packaging / test artifacts
 *.egg-info/
 .pytest_cache/

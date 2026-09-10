@@ -9,7 +9,7 @@ class FakeParser:
         self._error = error
         self.calls: list[tuple] = []
 
-    def parse(self, contents_b64, filename):
+    def parse(self, contents_b64, filename, on_progress=None):
         self.calls.append((contents_b64, filename))
         return self._df, self._error
 

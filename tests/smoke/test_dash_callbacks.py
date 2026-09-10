@@ -17,9 +17,14 @@ def _as_data_uri(path: str) -> str:
     return 'data:text/csv;base64,' + base64.b64encode(raw).decode()
 
 
+def _noop_progress(*args):
+    """update_store's set_progress param — real one only exists inside a
+    running background callback (Dash's DiskcacheManager)."""
+
+
 def test_update_store_with_no_upload_returns_hidden_state():
     use_case = build_analysis_use_case()
-    data, filename_hint, btn_style, badge = callbacks.update_store(use_case, None, None)
+    data, filename_hint, btn_style, badge = callbacks.update_store(use_case, _noop_progress, None, None)
     assert data is None
     assert btn_style == {'display': 'none'}
 
@@ -29,7 +34,7 @@ def test_update_store_parses_real_log(sample_log_csv_path):
     contents = _as_data_uri(sample_log_csv_path)
 
     data, filename_hint, btn_style, badge = callbacks.update_store(
-        use_case, contents, 'sample_log.csv',
+        use_case, _noop_progress, contents, 'sample_log.csv',
     )
 
     assert data is not None
@@ -43,7 +48,7 @@ def test_update_store_reports_parse_errors():
     bad_csv = 'data:text/csv;base64,' + base64.b64encode(b'no_timestamp_here\n1\n').decode()
 
     data, filename_hint, btn_style, badge = callbacks.update_store(
-        use_case, bad_csv, 'bad.csv',
+        use_case, _noop_progress, bad_csv, 'bad.csv',
     )
 
     assert data is None
@@ -61,7 +66,7 @@ def test_update_graphs_renders_full_dashboard(sample_log_csv_path):
     # this is the backward-compat path: no string tabs rendered.
     use_case = build_analysis_use_case()
     contents = _as_data_uri(sample_log_csv_path)
-    data, *_ = callbacks.update_store(use_case, contents, 'sample_log.csv')
+    data, *_ = callbacks.update_store(use_case, _noop_progress, contents, 'sample_log.csv')
 
     result = callbacks.update_graphs(use_case, data)
 
@@ -113,7 +118,7 @@ def test_download_html_report_with_no_data_is_noop():
 def test_download_html_report_builds_html(sample_log_csv_path):
     use_case = build_analysis_use_case()
     contents = _as_data_uri(sample_log_csv_path)
-    data, *_ = callbacks.update_store(use_case, contents, 'sample_log.csv')
+    data, *_ = callbacks.update_store(use_case, _noop_progress, contents, 'sample_log.csv')
 
     result = callbacks.download_html_report(data)
 

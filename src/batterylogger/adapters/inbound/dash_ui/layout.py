@@ -36,44 +36,43 @@ def build_layout() -> dbc.Container:
         ], className='border-bottom mb-3'),
 
         # ── Upload ──────────────────────────────────────────────────────────
-        # target_components ties this overlay to update_store's own Outputs,
-        # so it covers exactly the upload-and-parse phase (browser reads the
-        # file, then the CSV gets parsed) — separate from the analysis/chart
-        # stage below.
+        # The progress bar is driven by real row counts from
+        # CsvReadingParser (a background callback so it can push live
+        # updates via set_progress mid-parse) — shown/hidden by the
+        # `running` binding on update_store's app.callback registration.
         dbc.Row([
             dbc.Col([
-                dcc.Loading(
-                    type='circle',
-                    target_components={
-                        'memory-store': 'data',
-                        'output-filename': 'children',
-                        'header-badge': 'children',
+                dcc.Upload(
+                    id='upload-data',
+                    children=html.Div([
+                        html.I(className='bi bi-cloud-upload me-2'),
+                        'Drag & drop a CSV log file, or ',
+                        html.A('browse', className='text-primary fw-semibold', style={'cursor': 'pointer'}),
+                    ]),
+                    style={
+                        'width': '100%',
+                        'padding': '18px',
+                        'borderWidth': '2px',
+                        'borderStyle': 'dashed',
+                        'borderRadius': '8px',
+                        'borderColor': '#BDC3C7',
+                        'textAlign': 'center',
+                        'color': '#7F8C8D',
+                        'background': '#FAFBFC',
+                        'cursor': 'pointer',
                     },
-                    custom_spinner=_stage_spinner('Uploading & parsing CSV…'),
-                    children=[
-                        dcc.Upload(
-                            id='upload-data',
-                            children=html.Div([
-                                html.I(className='bi bi-cloud-upload me-2'),
-                                'Drag & drop a CSV log file, or ',
-                                html.A('browse', className='text-primary fw-semibold', style={'cursor': 'pointer'}),
-                            ]),
-                            style={
-                                'width': '100%',
-                                'padding': '18px',
-                                'borderWidth': '2px',
-                                'borderStyle': 'dashed',
-                                'borderRadius': '8px',
-                                'borderColor': '#BDC3C7',
-                                'textAlign': 'center',
-                                'color': '#7F8C8D',
-                                'background': '#FAFBFC',
-                                'cursor': 'pointer',
-                            },
-                            multiple=False,
-                        ),
-                        html.Div(id='output-filename', className='text-muted small mt-1 ms-1'),
-                    ],
+                    multiple=False,
+                ),
+                html.Div(id='output-filename', className='text-muted small mt-1 ms-1'),
+                html.Div(
+                    dbc.Progress(
+                        id='upload-progress-bar',
+                        value=0, label='', striped=True, animated=True,
+                        color='primary', style={'height': '18px', 'fontSize': '0.72rem'},
+                    ),
+                    id='upload-progress-wrap',
+                    className='mt-2',
+                    style={'display': 'none'},
                 ),
             ], width=12),
         ], className='mb-3'),

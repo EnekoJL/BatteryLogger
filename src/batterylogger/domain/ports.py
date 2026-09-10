@@ -9,7 +9,7 @@ method signatures, no inheritance required).
 """
 
 from datetime import datetime
-from typing import Optional, Protocol
+from typing import Callable, Optional, Protocol
 
 import pandas as pd
 
@@ -96,8 +96,18 @@ class ReadingWriterPort(Protocol):
 class ReadingParserPort(Protocol):
     """Driven port: turns an uploaded CSV log into a DataFrame (analyzer side, read-only)."""
 
-    def parse(self, contents_b64: str, filename: str) -> tuple[Optional[pd.DataFrame], Optional[str]]:
-        """Returns (dataframe, error_message) — exactly one is None."""
+    def parse(
+        self,
+        contents_b64: str,
+        filename: str,
+        on_progress: Optional[Callable[[int, int], None]] = None,
+    ) -> tuple[Optional[pd.DataFrame], Optional[str]]:
+        """Returns (dataframe, error_message) — exactly one is None.
+
+        `on_progress(rows_parsed, total_rows)`, called periodically while
+        parsing a large file — total_rows is exact (a cheap upfront
+        newline count), not an estimate.
+        """
         ...
 
 
