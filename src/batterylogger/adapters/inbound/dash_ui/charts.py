@@ -310,15 +310,29 @@ def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
             else:
                 clusters.append([s])
 
+        # Callouts anchored to their marker with a short arrow (not a fixed
+        # rotated label) so text stays flat and legible; a slanted label
+        # against a tight top margin was still getting clipped. Clusters
+        # close together on the x-axis alternate a taller arrow so their
+        # callout boxes don't stack on top of each other.
+        collision_gap = (x.iloc[-1] - x.iloc[0]) * 0.03 if len(x) > 1 else pd.Timedelta(0)
+        prev_start = None
+        stagger = False
         for cluster in clusters:
             start = cluster[0]['start']
             color = STATE_COLORS.get(cluster[0]['label'], C['muted'])
             sequence = ' → '.join(seg['label'] for seg in cluster)
+
+            stagger = (prev_start is not None and start - prev_start < collision_gap and not stagger)
+            prev_start = start
+
             fig.add_vline(x=start, line=dict(color=color, dash='dot', width=1))
             fig.add_annotation(
-                x=start, y=1.0, yref='paper', yanchor='bottom', xanchor='left',
-                text=f"{start:%H:%M}  {sequence}", showarrow=False, textangle=-20,
-                font=dict(size=9, color=color),
+                x=start, y='State', xanchor='center', yanchor='bottom',
+                text=f"<b>{start:%H:%M}</b><br>{sequence}",
+                showarrow=True, arrowhead=2, ax=0, ay=-70 if stagger else -45,
+                font=dict(size=13, color='black'),
+                bgcolor='white', bordercolor='#333333', borderwidth=1, borderpad=4,
             )
 
         # One marker per cluster; hover carries the exact timestamp of each
@@ -343,7 +357,7 @@ def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
 
         fig.update_xaxes(type='date')
         fig.update_yaxes(visible=False, showgrid=False)
-        fig.update_layout(bargap=0, height=180, margin=dict(l=10, r=10, t=80, b=30))
+        fig.update_layout(bargap=0, height=180, margin=dict(t=100, b=40, l=20, r=20))
         figs['state'] = fig
 
     return figs
