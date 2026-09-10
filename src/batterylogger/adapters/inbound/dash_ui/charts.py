@@ -247,13 +247,24 @@ def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
     figs['temp'] = fig
 
     # 6b. Battery State — combined operating-state / severity indicator,
-    # rendered as a single-lane timeline (one colored block per contiguous
-    # segment) rather than a line, so a brief state is never lost under a
-    # long one.
+    # rendered as a compact single-lane ribbon (one colored block per
+    # contiguous segment) rather than a line, so a brief state is never
+    # lost under a long one.
     state_series = _state_label_series(df, col)
     segments = _state_segments(x, state_series) if state_series is not None else []
     if segments:
         fig = _fig('Battery State', '')
+
+        # A segment shorter than ~1% of the whole log's span can be
+        # visually invisible next to a long RUN stretch even with a real
+        # bar — pad it to a minimum on-screen width (floor of 1 min so
+        # short logs aren't over-padded). The vline+label added below for
+        # every non-RUN segment carries the true event regardless of bar
+        # width, and hover on the bar always shows the real start/end, so
+        # this padding never hides the real numbers, only makes them visible.
+        total_span_ms = (x.iloc[-1] - x.iloc[0]) / pd.Timedelta(milliseconds=1) if len(x) > 1 else 60_000
+        min_width_ms = max(total_span_ms * 0.01, 60_000)
+
         fig.add_trace(go.Bar(
             # x must be a plain millisecond duration, not a pd.Timedelta —
             # Plotly's JSON encoder serializes Timedelta as an ISO-8601
@@ -261,7 +272,7 @@ def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
             # as a bar width against a date-typed base, so every bar
             # silently renders with zero width (a blank chart, axes only).
             base=[s['start'] for s in segments],
-            x=[(s['end'] - s['start']) / pd.Timedelta(milliseconds=1) for s in segments],
+            x=[max((s['end'] - s['start']) / pd.Timedelta(milliseconds=1), min_width_ms) for s in segments],
             y=['State'] * len(segments),
             orientation='h',
             marker=dict(color=[STATE_COLORS.get(s['label'], C['muted']) for s in segments], line=dict(width=0)),
@@ -283,9 +294,24 @@ def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
                 marker=dict(size=10, symbol='square', color=STATE_COLORS.get(label, C['muted'])),
                 name=label, showlegend=True,
             ))
+
+        # Every non-RUN segment is an event worth flagging at a glance
+        # without zoom or hover — a dashed guideline plus a short label
+        # above the ribbon, independent of how briefly it lasted.
+        for s in segments:
+            if s['label'] == 'RUN':
+                continue
+            color = STATE_COLORS.get(s['label'], C['muted'])
+            fig.add_vline(x=s['start'], line=dict(color=color, dash='dot', width=1))
+            fig.add_annotation(
+                x=s['start'], y=1.0, yref='paper', yanchor='bottom', xanchor='left',
+                text=s['label'], showarrow=False, textangle=-45,
+                font=dict(size=9, color=color),
+            )
+
         fig.update_xaxes(type='date')
-        fig.update_yaxes(visible=False)
-        fig.update_layout(bargap=0)
+        fig.update_yaxes(visible=False, showgrid=False)
+        fig.update_layout(bargap=0, height=180, margin=dict(l=10, r=10, t=60, b=30))
         figs['state'] = fig
 
     return figs
