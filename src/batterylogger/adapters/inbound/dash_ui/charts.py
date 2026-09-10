@@ -41,6 +41,16 @@ def _fig(title: str, y_label: str) -> go.Figure:
     return fig
 
 
+def _drop_zero(series: pd.Series) -> pd.Series:
+    """A literal 0 in a voltage reading is a sensor/comm glitch on this BMS,
+    not a real measurement (voltage can't legitimately hit 0 while the pack
+    is connected and logging) — plot it as a gap rather than a real point,
+    so it can't drag the y-axis autorange down to 0 and swamp the real
+    range. Unlike current/SOC/temperature, 0 has no valid meaning here.
+    """
+    return series.where(series != 0)
+
+
 def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
     """Builds the standard chart set from `df` columns under `prefix`.
 
@@ -78,13 +88,13 @@ def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
     # 2. Voltage
     fig = _fig('Battery Voltage', 'V')
     if col('voltage') in df.columns:
-        fig.add_trace(go.Scatter(x=x, y=df[col('voltage')], name='Voltage',
+        fig.add_trace(go.Scatter(x=x, y=_drop_zero(df[col('voltage')]), name='Voltage',
                                   line=dict(color=C['voltage'], width=2)))
     if col('sop_vCh') in df.columns:
-        fig.add_trace(go.Scatter(x=x, y=df[col('sop_vCh')], name='SOP Vch',
+        fig.add_trace(go.Scatter(x=x, y=_drop_zero(df[col('sop_vCh')]), name='SOP Vch',
                                   line=dict(color=C['sop_ch'], dash='dot', width=1)))
     if col('sop_vDisch') in df.columns:
-        fig.add_trace(go.Scatter(x=x, y=df[col('sop_vDisch')], name='SOP Vdch',
+        fig.add_trace(go.Scatter(x=x, y=_drop_zero(df[col('sop_vDisch')]), name='SOP Vdch',
                                   line=dict(color=C['sop_dch'], dash='dot', width=1)))
     figs['voltage'] = fig
 
@@ -116,16 +126,16 @@ def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
     # 5. Cell Voltages
     fig = _fig('Cell Voltages', 'mV')
     if col('vcell_vcellMax') in df.columns:
-        fig.add_trace(go.Scatter(x=x, y=df[col('vcell_vcellMax')], name='Max',
+        fig.add_trace(go.Scatter(x=x, y=_drop_zero(df[col('vcell_vcellMax')]), name='Max',
                                   line=dict(color=C['cell_max'], width=1.5)))
     if col('vcell_vcellMin') in df.columns:
-        fig.add_trace(go.Scatter(x=x, y=df[col('vcell_vcellMin')], name='Min',
+        fig.add_trace(go.Scatter(x=x, y=_drop_zero(df[col('vcell_vcellMin')]), name='Min',
                                   line=dict(color=C['cell_min'], width=1.5)))
     if col('vcell_vcellAvg') in df.columns:
-        fig.add_trace(go.Scatter(x=x, y=df[col('vcell_vcellAvg')], name='Avg',
+        fig.add_trace(go.Scatter(x=x, y=_drop_zero(df[col('vcell_vcellAvg')]), name='Avg',
                                   line=dict(color=C['muted'], width=1, dash='dot')))
     if col('vcell_corrected_vcell') in df.columns:
-        fig.add_trace(go.Scatter(x=x, y=df[col('vcell_corrected_vcell')], name='Corrected',
+        fig.add_trace(go.Scatter(x=x, y=_drop_zero(df[col('vcell_corrected_vcell')]), name='Corrected',
                                   line=dict(color=C['cell_corr'], width=2, dash='dash')))
     figs['vcell'] = fig
 
