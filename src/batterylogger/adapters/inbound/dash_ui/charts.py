@@ -295,23 +295,55 @@ def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
                 name=label, showlegend=True,
             ))
 
-        # Every non-RUN segment is an event worth flagging at a glance
-        # without zoom or hover — a dashed guideline plus a short label
-        # above the ribbon, independent of how briefly it lasted.
-        for s in segments:
-            if s['label'] == 'RUN':
-                continue
-            color = STATE_COLORS.get(s['label'], C['muted'])
-            fig.add_vline(x=s['start'], line=dict(color=color, dash='dot', width=1))
+        # Non-RUN segments are events worth flagging at a glance without
+        # zoom or hover — but a reconnect burst (DISCONNECTING -> READY ->
+        # CONNECTING, all within minutes) produces one annotation per
+        # micro-state, which overlaps and becomes unreadable. Group
+        # consecutive non-RUN segments that are close together in time into
+        # a single callout describing the whole sequence instead.
+        CLUSTER_GAP = pd.Timedelta(minutes=10)
+        non_run = [s for s in segments if s['label'] != 'RUN']
+        clusters = []
+        for s in non_run:
+            if clusters and s['start'] - clusters[-1][-1]['end'] <= CLUSTER_GAP:
+                clusters[-1].append(s)
+            else:
+                clusters.append([s])
+
+        for cluster in clusters:
+            start = cluster[0]['start']
+            color = STATE_COLORS.get(cluster[0]['label'], C['muted'])
+            sequence = ' → '.join(seg['label'] for seg in cluster)
+            fig.add_vline(x=start, line=dict(color=color, dash='dot', width=1))
             fig.add_annotation(
-                x=s['start'], y=1.0, yref='paper', yanchor='bottom', xanchor='left',
-                text=s['label'], showarrow=False, textangle=-45,
+                x=start, y=1.0, yref='paper', yanchor='bottom', xanchor='left',
+                text=f"{start:%H:%M}  {sequence}", showarrow=False, textangle=-20,
                 font=dict(size=9, color=color),
             )
 
+        # One marker per cluster; hover carries the exact timestamp of each
+        # sub-event, since the callout above only shows the sequence.
+        if clusters:
+            fig.add_trace(go.Scatter(
+                x=[c[0]['start'] for c in clusters],
+                y=['State'] * len(clusters),
+                mode='markers',
+                marker=dict(
+                    size=9, symbol='diamond',
+                    color=[STATE_COLORS.get(c[0]['label'], C['muted']) for c in clusters],
+                    line=dict(color='white', width=1),
+                ),
+                hovertext=[
+                    '<br>'.join(f"{seg['start']:%H:%M:%S}  {seg['label']}" for seg in cluster)
+                    for cluster in clusters
+                ],
+                hoverinfo='text',
+                showlegend=False,
+            ))
+
         fig.update_xaxes(type='date')
         fig.update_yaxes(visible=False, showgrid=False)
-        fig.update_layout(bargap=0, height=180, margin=dict(l=10, r=10, t=60, b=30))
+        fig.update_layout(bargap=0, height=180, margin=dict(l=10, r=10, t=80, b=30))
         figs['state'] = fig
 
     return figs
