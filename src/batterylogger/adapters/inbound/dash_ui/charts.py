@@ -321,16 +321,27 @@ def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
         for cluster in clusters:
             start = cluster[0]['start']
             color = STATE_COLORS.get(cluster[0]['label'], C['muted'])
-            sequence = ' → '.join(seg['label'] for seg in cluster)
+
+            # Long sequences wrap onto a second line instead of stretching
+            # the badge wide enough to collide with its neighbour.
+            labels = [seg['label'] for seg in cluster]
+            if len(labels) > 2:
+                mid = (len(labels) + 1) // 2
+                sequence = ' → '.join(labels[:mid]) + ' →<br>' + ' → '.join(labels[mid:])
+            else:
+                sequence = ' → '.join(labels)
 
             stagger = (prev_start is not None and start - prev_start < collision_gap and not stagger)
             prev_start = start
 
             fig.add_vline(x=start, line=dict(color=color, dash='dot', width=1))
             fig.add_annotation(
-                x=start, y='State', xanchor='center', yanchor='bottom',
+                # xanchor='left' grows the badge to the right of its marker
+                # instead of centering on it, so one near the left edge of
+                # the plot doesn't overflow off-screen.
+                x=start, y='State', xanchor='left', yanchor='bottom',
                 text=f"<b>{start:%H:%M}</b><br>{sequence}",
-                showarrow=True, arrowhead=2, ax=0, ay=-70 if stagger else -45,
+                showarrow=True, arrowhead=2, ax=0, ay=-95 if stagger else -45,
                 font=dict(size=13, color='black'),
                 bgcolor='white', bordercolor='#333333', borderwidth=1, borderpad=4,
             )
@@ -357,7 +368,7 @@ def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
 
         fig.update_xaxes(type='date')
         fig.update_yaxes(visible=False, showgrid=False)
-        fig.update_layout(bargap=0, height=180, margin=dict(t=100, b=40, l=20, r=20))
+        fig.update_layout(bargap=0, height=270, margin=dict(t=140, b=40, l=20, r=20))
         figs['state'] = fig
 
     return figs
