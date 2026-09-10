@@ -1,0 +1,11 @@
+/* Self-hosted (not Google Fonts CDN) so chart typography doesn't depend on
+   internet access — this app is often run on an isolated deployment
+   network. License: SIL OFL 1.1, see assets/fonts/OFL.txt. */
+@font-face {
+    font-family: 'Manrope';
+    font-style: normal;
+    font-weight: 400 800;
+    font-display: swap;
+    src: url('/assets/fonts/Manrope-Variable.woff2') format('woff2-variations'),
+         url('/assets/fonts/Manrope-Variable.woff2') format('woff2');
+}
