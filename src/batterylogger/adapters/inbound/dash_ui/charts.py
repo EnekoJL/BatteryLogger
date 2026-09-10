@@ -59,7 +59,7 @@ CHART_LAYOUT = dict(
     xaxis_title='',
     margin=dict(l=10, r=10, t=40, b=30),
     legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
-    font=dict(family='Inter, system-ui, sans-serif', size=12),
+    font=dict(family="'Manrope', Inter, 'Segoe UI', system-ui, sans-serif", size=12),
 )
 
 
