@@ -323,8 +323,6 @@ def build_string_tabs(df: pd.DataFrame) -> dbc.Tabs | None:
                 dbc.Col(_string_graph(prefix, 'temp', figs), md=6),
             ], className='mb-3'),
         ] + ([
-            dbc.Row([dbc.Col(_string_graph(prefix, 'dispersion', figs), md=6)], className='mb-3'),
-        ] if 'dispersion' in figs else []) + ([
             dbc.Row([dbc.Col(_string_graph(prefix, 'state', figs), md=12)], className='mb-3'),
         ] if 'state' in figs else []), className='pt-3')
 

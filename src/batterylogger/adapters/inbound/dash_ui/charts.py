@@ -25,15 +25,32 @@ C = {
     'muted':        '#95A5A6',
 }
 
-# BMS `status` is a raw int with no string form from the API. We've only ever
-# observed status=0 (normal) in real data, so this label mapping is an
-# UNVERIFIED BEST GUESS pending confirmation from CEGASA BMS docs — correct
-# it here once the real code→severity mapping is known.
+# BMS `status` is a raw int with no string form from the API — mapping
+# confirmed against the firmware's own `enum status` (status_t):
+# OK=0, CAUTION=1, WARNING=2, ALARM=3.
 STATE_STATUS_LABELS = {1: 'CAUTION', 2: 'WARNING', 3: 'ALARM'}
+
+# Operating state (`enum state` / state_t) — state_str already comes through
+# as the enum member name (minus the SM_ prefix, e.g. state=5 -> 'RUN'), so
+# no int->string decoding is needed here, just a color per name. Covers the
+# full state_t range (INIT..SHUTDOWN) plus the severity labels above, so an
+# unexpected/older CSV still gets a sane color instead of falling through to
+# the muted fallback for every segment.
 STATE_COLORS = {
-    'READY': '#95A5A6', 'CONNECTING': '#3498DB', 'RUN': C['power_pos'],
-    'DISCONNECTING': '#9B59B6', 'CAUTION': '#F1C40F', 'WARNING': '#E67E22',
-    'ALARM': C['power_neg'],
+    'INIT':          '#BDC3C7',
+    'STARTUP':       '#1ABC9C',
+    'DISABLED':      '#5D6D7E',
+    'READY':         '#3498DB',
+    'CONNECTING':    '#F39C12',
+    'RUN':           C['power_pos'],
+    'DISCONNECTING': '#95A5A6',
+    'BREAKDOWN':     C['power_neg'],
+    'FAULT':         C['power_neg'],  # alias, in case a firmware variant sends this instead of BREAKDOWN
+    'BOOT':          '#8E44AD',
+    'SHUTDOWN':      '#34495E',
+    'CAUTION':       '#F1C40F',
+    'WARNING':       '#E67E22',
+    'ALARM':         C['power_neg'],
 }
 
 CHART_LAYOUT = dict(
@@ -238,8 +255,13 @@ def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
     if segments:
         fig = _fig('Battery State', '')
         fig.add_trace(go.Bar(
+            # x must be a plain millisecond duration, not a pd.Timedelta —
+            # Plotly's JSON encoder serializes Timedelta as an ISO-8601
+            # duration string ('P0DT0H0M30S'), which Plotly.js can't parse
+            # as a bar width against a date-typed base, so every bar
+            # silently renders with zero width (a blank chart, axes only).
             base=[s['start'] for s in segments],
-            x=[s['end'] - s['start'] for s in segments],
+            x=[(s['end'] - s['start']) / pd.Timedelta(milliseconds=1) for s in segments],
             y=['State'] * len(segments),
             orientation='h',
             marker=dict(color=[STATE_COLORS.get(s['label'], C['muted']) for s in segments], line=dict(width=0)),
@@ -265,18 +287,5 @@ def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
         fig.update_yaxes(visible=False)
         fig.update_layout(bargap=0)
         figs['state'] = fig
-
-    # 7. Dispersion (per-string only — pack-level home data has no dispersion section)
-    if col('dispersion_dispersionMax') in df.columns:
-        fig = _fig('Cell Dispersion', 'mV')
-        fig.add_trace(go.Scatter(x=x, y=df[col('dispersion_dispersionMax')], name='Max',
-                                  line=dict(color=C['cell_max'], width=1.5)))
-        if col('dispersion_dispersionMin') in df.columns:
-            fig.add_trace(go.Scatter(x=x, y=df[col('dispersion_dispersionMin')], name='Min',
-                                      line=dict(color=C['cell_min'], width=1.5)))
-        if col('dispersion_dispersionAvg') in df.columns:
-            fig.add_trace(go.Scatter(x=x, y=df[col('dispersion_dispersionAvg')], name='Avg',
-                                      line=dict(color=C['muted'], width=1, dash='dot')))
-        figs['dispersion'] = fig
 
     return figs
