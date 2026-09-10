@@ -153,12 +153,9 @@ def build_session_stats(stats: SessionStats) -> html.Div:
     ])
 
 
-def build_cycle_table(cycles: list[Cycle], n_parallel: int = 1) -> dbc.Card | None:
+def build_cycle_table(cycles: list[Cycle]) -> dbc.Card | None:
     if not cycles:
         return None
-
-    n_parallel = max(1, int(n_parallel or 1))
-    multi = n_parallel > 1
 
     DCH_COLOR = '#E74C3C'
     CH_COLOR = '#27AE60'
@@ -184,10 +181,6 @@ def build_cycle_table(cycles: list[Cycle], n_parallel: int = 1) -> dbc.Card | No
         _th('SOC End', '8%', 'right'),
         _th('ΔSOC', '6%', 'right'),
         _th('Ah Total', '8%', 'right'),
-    ]
-    if multi:
-        th_cells.append(_th('Ah / String', '8%', 'right'))
-    th_cells += [
         _th('Ah (∫I·dt)', '8%', 'right'),
         _th('Theo. Ah', '8%', 'right'),
         _th('Match', '6%', 'right'),
@@ -203,13 +196,11 @@ def build_cycle_table(cycles: list[Cycle], n_parallel: int = 1) -> dbc.Card | No
         icon = '↓' if is_dch else '↑'
         label = 'Discharge' if is_dch else 'Charge'
         ah_total = c.ah
-        ah_string = ah_total / n_parallel
 
         date_str = c.t_start.strftime('%Y-%m-%d')
         period = f"{date_str}   {c.t_start.strftime('%H:%M')} → {c.t_end.strftime('%H:%M')}"
 
-        # Match uses per-string Ah vs per-string theoretical
-        match = (ah_string / c.theo_ah * 100.0) if (c.theo_ah and c.theo_ah > 0 and not c.note) else None
+        match = (ah_total / c.theo_ah * 100.0) if (c.theo_ah and c.theo_ah > 0 and not c.note) else None
         if match is not None:
             m_color = '#27AE60' if match >= 95 else ('#F39C12' if match >= 85 else '#E74C3C')
             match_td = html.Td(f'{match:.1f}%', style={'textAlign': 'right', 'color': m_color, 'fontWeight': '600', 'verticalAlign': 'middle'})
@@ -233,15 +224,10 @@ def build_cycle_table(cycles: list[Cycle], n_parallel: int = 1) -> dbc.Card | No
             html.Td(f"{c.soc_end:.1f}%", style={'textAlign': 'right', 'verticalAlign': 'middle'}),
             html.Td(f"{c.delta_soc:.1f}%", style={'textAlign': 'right', 'verticalAlign': 'middle'}),
             html.Td(f"{ah_total:.1f} Ah",
-                    style={'textAlign': 'right', 'fontWeight': '600' if not multi else 'normal',
-                           'color': '#7F8C8D' if multi else 'inherit', 'verticalAlign': 'middle'}),
+                    style={'textAlign': 'right', 'fontWeight': '600', 'verticalAlign': 'middle'}),
         ]
-        if multi:
-            td_cells.append(
-                html.Td(f"{ah_string:.1f} Ah", style={'textAlign': 'right', 'fontWeight': '600', 'verticalAlign': 'middle'})
-            )
 
-        ah_calc_str = f"{c.ah_calc / n_parallel:.1f} Ah" if c.ah_calc is not None else '—'
+        ah_calc_str = f"{c.ah_calc:.1f} Ah" if c.ah_calc is not None else '—'
         td_cells += [
             html.Td(ah_calc_str, style={'textAlign': 'right', 'color': '#8E44AD', 'fontWeight': '600', 'verticalAlign': 'middle'}),
             html.Td(f"{theo_str} Ah", style={'textAlign': 'right', 'color': '#7F8C8D', 'verticalAlign': 'middle'}),
@@ -260,7 +246,7 @@ def build_cycle_table(cycles: list[Cycle], n_parallel: int = 1) -> dbc.Card | No
 
     caption_parts = [
         'Ah (BMS): BMS internal coulomb counter  ·  Ah (∫I·dt): manual integration of logged current × Δt  ·  Theo. Ah: Useful Capacity × ΔSOC / 100',
-        f'Useful Capacity: {useful_cap:.0f} Ah  ·  Match uses Ah/String vs Theo. Ah  ·  only cycles ≥ 50% ΔSOC shown',
+        f'Useful Capacity: {useful_cap:.0f} Ah  ·  Match uses Ah vs Theo. Ah  ·  only cycles ≥ 50% ΔSOC shown',
     ]
     if nominal_cap:
         caption_parts.append(f'Nominal: {nominal_cap:.0f} Ah')
@@ -310,9 +296,7 @@ def build_string_tabs(df: pd.DataFrame) -> dbc.Tabs | None:
     """One tab per discovered string, each with its own stat cards + charts.
 
     Returns None for old-format logs (no `string{N}_soc` columns) — fully
-    additive, doesn't touch the existing pack-level dashboard or the manual
-    "Strings in parallel" selector (which still drives cycle-table Ah math
-    for backward compatibility with those old logs).
+    additive, doesn't touch the existing pack-level dashboard.
     """
     string_ids = detect_string_ids(df)
     if not string_ids:
@@ -340,7 +324,9 @@ def build_string_tabs(df: pd.DataFrame) -> dbc.Tabs | None:
             ], className='mb-3'),
         ] + ([
             dbc.Row([dbc.Col(_string_graph(prefix, 'dispersion', figs), md=6)], className='mb-3'),
-        ] if 'dispersion' in figs else []), className='pt-3')
+        ] if 'dispersion' in figs else []) + ([
+            dbc.Row([dbc.Col(_string_graph(prefix, 'state', figs), md=12)], className='mb-3'),
+        ] if 'state' in figs else []), className='pt-3')
 
         tabs.append(dbc.Tab(tab_content, label=f'String {sid}', tab_id=f'string-tab-{sid}'))
 

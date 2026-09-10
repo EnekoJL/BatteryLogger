@@ -19,7 +19,7 @@ def _as_data_uri(path: str) -> str:
 
 def test_update_store_with_no_upload_returns_hidden_state():
     use_case = build_analysis_use_case()
-    data, filename_hint, btn_style, badge, selector_style = callbacks.update_store(use_case, None, None)
+    data, filename_hint, btn_style, badge = callbacks.update_store(use_case, None, None)
     assert data is None
     assert btn_style == {'display': 'none'}
 
@@ -28,7 +28,7 @@ def test_update_store_parses_real_log(sample_log_csv_path):
     use_case = build_analysis_use_case()
     contents = _as_data_uri(sample_log_csv_path)
 
-    data, filename_hint, btn_style, badge, selector_style = callbacks.update_store(
+    data, filename_hint, btn_style, badge = callbacks.update_store(
         use_case, contents, 'sample_log.csv',
     )
 
@@ -42,7 +42,7 @@ def test_update_store_reports_parse_errors():
     use_case = build_analysis_use_case()
     bad_csv = 'data:text/csv;base64,' + base64.b64encode(b'no_timestamp_here\n1\n').decode()
 
-    data, filename_hint, btn_style, badge, selector_style = callbacks.update_store(
+    data, filename_hint, btn_style, badge = callbacks.update_store(
         use_case, bad_csv, 'bad.csv',
     )
 
@@ -52,7 +52,7 @@ def test_update_store_reports_parse_errors():
 
 def test_update_graphs_with_no_data_shows_placeholder():
     use_case = build_analysis_use_case()
-    result = callbacks.update_graphs(use_case, None, 1)
+    result = callbacks.update_graphs(use_case, None)
     assert isinstance(result, html.Div)
 
 
@@ -63,11 +63,11 @@ def test_update_graphs_renders_full_dashboard(sample_log_csv_path):
     contents = _as_data_uri(sample_log_csv_path)
     data, *_ = callbacks.update_store(use_case, contents, 'sample_log.csv')
 
-    result = callbacks.update_graphs(use_case, data, 1)
+    result = callbacks.update_graphs(use_case, data)
 
     assert isinstance(result, html.Div)
-    # device panel + stats + cycle table + hr + 3 chart rows + string-tabs slot = 8 children
-    assert len(result.children) == 8
+    # device panel + stats + cycle table + hr + 3 chart rows + state row + string-tabs slot = 9 children
+    assert len(result.children) == 9
     assert isinstance(result.children[-1], html.Div)
     assert not result.children[-1].children  # empty placeholder — no strings discovered
 
@@ -95,7 +95,7 @@ def test_update_graphs_renders_string_tabs_for_multi_string_data():
     use_case = build_analysis_use_case()
     data = _multi_string_records()
 
-    result = callbacks.update_graphs(use_case, data, 1)
+    result = callbacks.update_graphs(use_case, data)
 
     string_tabs = result.children[-1]
     assert isinstance(string_tabs, dbc.Tabs)

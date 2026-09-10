@@ -64,24 +64,6 @@ def build_layout() -> dbc.Container:
                     style={'display': 'none'},
                 ),
             ], className='d-flex align-items-center gap-3 flex-wrap'),
-            dbc.Col([
-                html.Div([
-                    html.Span(
-                        [html.I(className='bi bi-battery me-1'), 'Strings in parallel:'],
-                        className='text-muted small me-2 align-middle',
-                    ),
-                    dbc.RadioItems(
-                        id='parallel-count',
-                        options=[{'label': str(i), 'value': i} for i in range(1, 7)],
-                        value=1,
-                        inline=True,
-                        input_class_name='btn-check',
-                        label_class_name='btn btn-outline-primary btn-sm',
-                        label_checked_class_name='active',
-                        class_name='btn-group',
-                    ),
-                ], id='parallel-selector', className='d-flex align-items-center', style={'display': 'none !important'}),
-            ], className='text-end'),
         ], className='mb-2 align-items-center'),
 
         html.Hr(className='my-2'),

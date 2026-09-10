@@ -25,6 +25,17 @@ C = {
     'muted':        '#95A5A6',
 }
 
+# BMS `status` is a raw int with no string form from the API. We've only ever
+# observed status=0 (normal) in real data, so this label mapping is an
+# UNVERIFIED BEST GUESS pending confirmation from CEGASA BMS docs — correct
+# it here once the real code→severity mapping is known.
+STATE_STATUS_LABELS = {1: 'CAUTION', 2: 'WARNING', 3: 'ALARM'}
+STATE_COLORS = {
+    'READY': '#95A5A6', 'CONNECTING': '#3498DB', 'RUN': C['power_pos'],
+    'DISCONNECTING': '#9B59B6', 'CAUTION': '#F1C40F', 'WARNING': '#E67E22',
+    'ALARM': C['power_neg'],
+}
+
 CHART_LAYOUT = dict(
     template='plotly_white',
     hovermode='x unified',
@@ -51,6 +62,57 @@ def _drop_below(series: pd.Series, floor: float) -> pd.Series:
     autorange down and crushing the real signal.
     """
     return series.where(series >= floor)
+
+
+def _state_label_series(df: pd.DataFrame, col) -> pd.Series | None:
+    """Severity (status != 0) takes precedence over operating state
+    (state_str) when both are present for a timestamp — see STATE_STATUS_LABELS."""
+    has_state = col('state_str') in df.columns
+    has_status = col('status') in df.columns
+    if not has_state and not has_status:
+        return None
+
+    def label(row):
+        status = row.get(col('status')) if has_status else None
+        if pd.notna(status) and int(status) != 0:
+            return STATE_STATUS_LABELS.get(int(status), f'STATUS_{int(status)}')
+        state = row.get(col('state_str')) if has_state else None
+        return state if isinstance(state, str) and state else 'UNKNOWN'
+
+    return df.apply(label, axis=1)
+
+
+def _state_segments(x: pd.Series, labels: pd.Series) -> list[dict]:
+    """Run-length encodes consecutive identical state labels into
+    contiguous time segments. A per-sample line/marker trace lets a long
+    RUN stretch visually swallow brief states on a large log (a single
+    transition sample renders as a near-invisible one-pixel spike) — a
+    segment always gets real screen width regardless of how briefly the
+    BMS was in it.
+    """
+    if labels.empty:
+        return []
+
+    group = (labels != labels.shift()).cumsum()
+    starts = x.groupby(group).first()
+    ends = x.groupby(group).last()
+    seg_labels = labels.groupby(group).first()
+
+    step = x.diff().median()
+    if pd.isna(step) or step <= pd.Timedelta(0):
+        step = pd.Timedelta(seconds=1)
+
+    # Segments end where the next one starts, so they render as touching
+    # blocks; the last segment has no "next" to borrow from, so it gets one
+    # synthetic sampling step of width instead of collapsing to zero — it's
+    # often the current, most important state on a live log.
+    next_starts = starts.shift(-1)
+    next_starts.iloc[-1] = ends.iloc[-1] + step
+
+    return [
+        {'label': label, 'start': start, 'end': end}
+        for label, start, end in zip(seg_labels, starts, next_starts)
+    ]
 
 
 def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
@@ -166,6 +228,43 @@ def create_figures(df: pd.DataFrame, prefix: str = '') -> dict:
         fig.add_trace(go.Scatter(x=x, y=_drop_below(df[col('temperature_tempPCB')], 1), name='PCB',
                                   line=dict(color=C['temp_pcb'], dash='dot', width=1)))
     figs['temp'] = fig
+
+    # 6b. Battery State — combined operating-state / severity indicator,
+    # rendered as a single-lane timeline (one colored block per contiguous
+    # segment) rather than a line, so a brief state is never lost under a
+    # long one.
+    state_series = _state_label_series(df, col)
+    segments = _state_segments(x, state_series) if state_series is not None else []
+    if segments:
+        fig = _fig('Battery State', '')
+        fig.add_trace(go.Bar(
+            base=[s['start'] for s in segments],
+            x=[s['end'] - s['start'] for s in segments],
+            y=['State'] * len(segments),
+            orientation='h',
+            marker=dict(color=[STATE_COLORS.get(s['label'], C['muted']) for s in segments], line=dict(width=0)),
+            text=[s['label'] for s in segments],
+            textposition='inside',
+            insidetextanchor='middle',
+            hovertext=[
+                f"{s['label']}<br>{s['start']:%Y-%m-%d %H:%M:%S} → {s['end']:%Y-%m-%d %H:%M:%S}"
+                for s in segments
+            ],
+            hoverinfo='text',
+            showlegend=False,
+        ))
+        # Bar's marker.color array has no legend of its own — add one
+        # zero-size swatch per state actually present, in first-seen order.
+        for label in dict.fromkeys(s['label'] for s in segments):
+            fig.add_trace(go.Scatter(
+                x=[None], y=[None], mode='markers',
+                marker=dict(size=10, symbol='square', color=STATE_COLORS.get(label, C['muted'])),
+                name=label, showlegend=True,
+            ))
+        fig.update_xaxes(type='date')
+        fig.update_yaxes(visible=False)
+        fig.update_layout(bargap=0)
+        figs['state'] = fig
 
     # 7. Dispersion (per-string only — pack-level home data has no dispersion section)
     if col('dispersion_dispersionMax') in df.columns:

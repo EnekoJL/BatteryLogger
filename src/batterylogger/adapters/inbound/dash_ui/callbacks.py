@@ -22,9 +22,8 @@ from batterylogger.adapters.inbound.dash_ui.charts import create_figures
 
 
 def update_store(analysis_use_case: AnalysisUseCase, contents, filename):
-    hidden = {'display': 'none'}
     if contents is None:
-        return None, '', {'display': 'none'}, '', hidden
+        return None, '', {'display': 'none'}, ''
 
     df, error = analysis_use_case.parse(contents, filename)
     if error:
@@ -33,7 +32,6 @@ def update_store(analysis_use_case: AnalysisUseCase, contents, filename):
             dbc.Alert(f'Error: {error}', color='danger', className='py-2 mt-1'),
             {'display': 'none'},
             '',
-            hidden,
         )
 
     data = df.to_dict('records')
@@ -51,10 +49,10 @@ def update_store(analysis_use_case: AnalysisUseCase, contents, filename):
         html.Span(f' · {date_str}', className='text-muted ms-1') if date_str else '',
     ])
 
-    return data, filename_hint, {'display': 'inline-block'}, badge, {'display': 'flex', 'alignItems': 'center'}
+    return data, filename_hint, {'display': 'inline-block'}, badge
 
 
-def update_graphs(analysis_use_case: AnalysisUseCase, data, n_parallel):
+def update_graphs(analysis_use_case: AnalysisUseCase, data):
     if data is None:
         return html.Div([
             html.Div([
@@ -70,7 +68,7 @@ def update_graphs(analysis_use_case: AnalysisUseCase, data, n_parallel):
     first_row = df.iloc[0].to_dict() if len(df) > 0 else {}
     device_panel = components.build_device_info_panel(first_row)
     session_stats = components.build_session_stats(result.stats)
-    cycle_table = components.build_cycle_table(result.cycles, n_parallel=n_parallel or 1)
+    cycle_table = components.build_cycle_table(result.cycles)
 
     def graph(key, **kwargs):
         return dcc.Graph(
@@ -100,6 +98,8 @@ def update_graphs(analysis_use_case: AnalysisUseCase, data, n_parallel):
             dbc.Col(graph('vcell'), md=6),
             dbc.Col(graph('temp'), md=6),
         ], className='mb-3'),
+
+        dbc.Row([dbc.Col(graph('state'), md=12)], className='mb-3') if 'state' in figs else html.Div(),
 
         components.build_string_tabs(df) or html.Div(),
     ])
@@ -206,8 +206,7 @@ def register_callbacks(app: dash.Dash, analysis_use_case: AnalysisUseCase) -> No
         [Output('memory-store', 'data'),
          Output('output-filename', 'children'),
          Output('btn-download-html', 'style'),
-         Output('header-badge', 'children'),
-         Output('parallel-selector', 'style')],
+         Output('header-badge', 'children')],
         Input('upload-data', 'contents'),
         State('upload-data', 'filename'),
     )(partial(update_store, analysis_use_case))
@@ -215,7 +214,6 @@ def register_callbacks(app: dash.Dash, analysis_use_case: AnalysisUseCase) -> No
     app.callback(
         Output('output-graphs', 'children'),
         Input('memory-store', 'data'),
-        Input('parallel-count', 'value'),
     )(partial(update_graphs, analysis_use_case))
 
     app.callback(
