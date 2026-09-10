@@ -4,6 +4,16 @@ from dash import dcc, html
 import dash_bootstrap_components as dbc
 
 
+def _stage_spinner(text: str) -> html.Div:
+    """Overlay shown by a dcc.Loading while its target_components outputs
+    are pending — a plain spinner icon alone doesn't say what's happening,
+    so pair it with a short status label."""
+    return html.Div([
+        dbc.Spinner(size='sm', color='primary'),
+        html.Span(text, className='ms-2 text-muted small'),
+    ], className='d-flex align-items-center justify-content-center py-3')
+
+
 def build_layout() -> dbc.Container:
     return dbc.Container([
         dcc.Store(id='memory-store'),
@@ -26,30 +36,45 @@ def build_layout() -> dbc.Container:
         ], className='border-bottom mb-3'),
 
         # ── Upload ──────────────────────────────────────────────────────────
+        # target_components ties this overlay to update_store's own Outputs,
+        # so it covers exactly the upload-and-parse phase (browser reads the
+        # file, then the CSV gets parsed) — separate from the analysis/chart
+        # stage below.
         dbc.Row([
             dbc.Col([
-                dcc.Upload(
-                    id='upload-data',
-                    children=html.Div([
-                        html.I(className='bi bi-cloud-upload me-2'),
-                        'Drag & drop a CSV log file, or ',
-                        html.A('browse', className='text-primary fw-semibold', style={'cursor': 'pointer'}),
-                    ]),
-                    style={
-                        'width': '100%',
-                        'padding': '18px',
-                        'borderWidth': '2px',
-                        'borderStyle': 'dashed',
-                        'borderRadius': '8px',
-                        'borderColor': '#BDC3C7',
-                        'textAlign': 'center',
-                        'color': '#7F8C8D',
-                        'background': '#FAFBFC',
-                        'cursor': 'pointer',
+                dcc.Loading(
+                    type='circle',
+                    target_components={
+                        'memory-store': 'data',
+                        'output-filename': 'children',
+                        'header-badge': 'children',
                     },
-                    multiple=False,
+                    custom_spinner=_stage_spinner('Uploading & parsing CSV…'),
+                    children=[
+                        dcc.Upload(
+                            id='upload-data',
+                            children=html.Div([
+                                html.I(className='bi bi-cloud-upload me-2'),
+                                'Drag & drop a CSV log file, or ',
+                                html.A('browse', className='text-primary fw-semibold', style={'cursor': 'pointer'}),
+                            ]),
+                            style={
+                                'width': '100%',
+                                'padding': '18px',
+                                'borderWidth': '2px',
+                                'borderStyle': 'dashed',
+                                'borderRadius': '8px',
+                                'borderColor': '#BDC3C7',
+                                'textAlign': 'center',
+                                'color': '#7F8C8D',
+                                'background': '#FAFBFC',
+                                'cursor': 'pointer',
+                            },
+                            multiple=False,
+                        ),
+                        html.Div(id='output-filename', className='text-muted small mt-1 ms-1'),
+                    ],
                 ),
-                html.Div(id='output-filename', className='text-muted small mt-1 ms-1'),
             ], width=12),
         ], className='mb-3'),
 
@@ -69,10 +94,11 @@ def build_layout() -> dbc.Container:
         html.Hr(className='my-2'),
 
         # ── Dynamic content ─────────────────────────────────────────────────
-        dbc.Spinner(
-            html.Div(id='output-graphs'),
-            color='primary',
-            spinner_style={'width': '2rem', 'height': '2rem'},
+        dcc.Loading(
+            type='circle',
+            target_components={'output-graphs': 'children'},
+            custom_spinner=_stage_spinner('Analyzing data & building charts…'),
+            children=html.Div(id='output-graphs'),
         ),
 
     ], fluid=True, className='px-4')
