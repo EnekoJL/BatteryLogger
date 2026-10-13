@@ -22,15 +22,23 @@ with going forward, just a safety copy from the 2026-09-04 restructure.
 ## Run
 
 ```bash
-# First time: ./run.sh   (creates env, installs package + dev deps in editable mode)
+# First time: ./linux/run.sh (Linux) or windows\run.bat (Windows)
+# (creates env, installs package + dev deps in editable mode)
 
 source env/bin/activate
+# or on Windows: env\Scripts\activate
 
 # Logger (connects to BMS at IP in cfg.ini)
+# Direct:
 python -m batterylogger.entrypoints.logger_main
+# Or via runners:
+# ./linux/run_logger.sh  /  windows\run_logger.bat
 
 # Analyzer (drag-and-drop CSV at http://localhost:8050)
+# Direct:
 python -m batterylogger.entrypoints.analyzer_main
+# Or via runners:
+# ./linux/run_analyzer.sh  /  windows\run_analyzer.bat
 
 # Tests
 pytest --cov=batterylogger
@@ -57,7 +65,8 @@ pytest --cov=batterylogger
 | `src/batterylogger/adapters/inbound/dash_ui/` | Analyzer Dash app (layout/callbacks/charts/components) |
 | `src/batterylogger/bootstrap/container.py` | Composition root — wires adapters into use-cases |
 | `cfg.ini` | IP, poll rates, cell count, alert thresholds (repo root — resolved relative to cwd) |
-| `run.sh` | Creates `env/`, `pip install -e ".[dev]"` |
+| `linux/` | Linux runner scripts (`run.sh`, `run_logger.sh`, `run_analyzer.sh`, `setup_env.sh`) |
+| `windows/` | Windows runner scripts (`run.bat`, `run_logger.bat`, `run_analyzer.bat`) |
 | `tests/` | pytest suite — `unit/domain`, `unit/application`, `integration`, `smoke` |
 | `doc/` | Additional documentation |
 
@@ -145,4 +154,4 @@ pytest, pytest-asyncio, pytest-cov, pytest-mock, aioresponses, freezegun
 ```
 
 Python ≥ 3.10 required (uses `X | Y` union type hints). Package installed
-editable via `pyproject.toml` (`pip install -e ".[dev]"`) — `run.sh` does this.
+editable via `pyproject.toml` (`pip install -e ".[dev]"`) — `./linux/run.sh` / `windows\run.bat` does this.

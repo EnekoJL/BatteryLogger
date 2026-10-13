@@ -56,7 +56,7 @@ fi
 
 if ! venv_is_isolated; then
     echo "error: could not provision an isolated virtual environment in ./${VENV_DIR}." >&2
-    echo "Try manually: rm -rf ${VENV_DIR} && sudo apt-get install python3-venv && ./run.sh" >&2
+    echo "Try manually: rm -rf ${VENV_DIR} && sudo apt-get install python3-venv && ./linux/run.sh" >&2
     exit 1
 fi
 

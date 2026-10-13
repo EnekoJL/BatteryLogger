@@ -11,7 +11,8 @@ Real-time logging and offline analysis tool for CEGASA BCS battery systems.
 
 ```bash
 # One-shot: creates ./env and installs the package + dev/test dependencies
-./run.sh
+./linux/run.sh         # Linux / WSL
+windows\run.bat        # Windows
 
 # Or manually
 python -m venv env
@@ -87,7 +88,7 @@ python -m batterylogger.entrypoints.logger_main --no-csv
 python -m batterylogger.entrypoints.logger_main --config /data/site_a/cfg.ini
 ```
 
-Or, after `./run.sh`, the console-script shortcuts `battery-logger` / `battery-analyzer` also work.
+Or, after running the setup script (`./linux/run.sh` or `windows\run.bat`), the console-script shortcuts `battery-logger` / `battery-analyzer` also work.
 
 ### Log Analyzer
 
@@ -187,7 +188,8 @@ BatteryLogger/
 ├── pyproject.toml         Packaging + pytest config
 ├── requirements.txt       Runtime dependencies
 ├── requirements-dev.txt   + test tooling
-├── run.sh                 Creates venv + installs everything
+├── linux/                 Runner scripts for Linux (run.sh, run_logger.sh, run_analyzer.sh)
+├── windows/               Runner scripts for Windows (run.bat, run_logger.bat, run_analyzer.bat)
 └── csv/                   Log files (auto-created on first run)
 ```
 
